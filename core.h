@@ -17,6 +17,7 @@
 #include <memory>
 #include <unordered_map>
 #include <thread>
+#include <chrono>
 
 // --- Import Qt headers ---
 #include <QObject>
@@ -26,7 +27,6 @@
 #include <QDebug>
 #include <QTimer>
 #include <QElapsedTimer>
-#include <QThread>
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QMetaObject>
@@ -443,7 +443,7 @@ inline Core::~Core() {
 
     while (!m_activeTaskList.empty() && waitTimer.elapsed() < kDtorWaitMs) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-        QThread::msleep(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     if (m_activeTaskList.empty()) {
@@ -463,7 +463,7 @@ inline Core::~Core() {
 
     while (!m_activeTaskList.empty() && waitTimer.elapsed() < (kDtorWaitMs * 2)) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-        QThread::msleep(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     if (!m_activeTaskList.empty()) {
