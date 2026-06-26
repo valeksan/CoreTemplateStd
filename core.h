@@ -24,8 +24,6 @@
 
 // --- Import Qt headers ---
 #include <QObject>
-#include <QTimer>
-#include <QMetaObject>
 
 // --- Threading/Multiprocessing API Headers ---
 #ifdef Q_OS_WIN
@@ -311,7 +309,6 @@ private:
     void publishStopRequested(const Task& task);
     void publishStopTimedOut(const Task& task, TaskStopTimeout timeout);
     void postToOwner(std::function<void()> event);
-    void wakeOwnerEventLoop();
     void scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event);
 
     template <typename... Args>
@@ -537,12 +534,6 @@ inline void Core::postToOwner(std::function<void()> event) {
     }
 }
 
-inline void Core::wakeOwnerEventLoop() {
-    QMetaObject::invokeMethod(this, [this]() {
-        processEvents();
-    }, Qt::QueuedConnection);
-}
-
 inline void Core::scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event) {
     const auto normalizedDelayMs = std::max(delayMs, static_cast<TaskStopTimeout>(0));
     {
@@ -552,10 +543,6 @@ inline void Core::scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<vo
             std::move(event)
         });
     }
-
-    QTimer::singleShot(normalizedDelayMs, this, [this]() {
-        processEvents();
-    });
 }
 
 inline StartedEvent Core::makeStartedEvent(const Task& task) {
@@ -1204,7 +1191,6 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
                 removeActiveTask(pTask);
                 startQueuedTask();
             });
-            wakeOwnerEventLoop();
         }
     );
 
