@@ -16,6 +16,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <thread>
 
 // --- Import Qt headers ---
 #include <QObject>
@@ -303,6 +304,7 @@ private:
     std::vector<std::shared_ptr<Task>> m_queuedTaskList;
     std::atomic_bool m_blockStartTask{false};
     bool m_allowForceTermination = false;
+    std::thread::id m_ownerThreadId;
     StartedCallback m_startedCallback;
     FinishedCallback m_finishedCallback;
     TerminatedCallback m_terminatedCallback;
@@ -383,7 +385,7 @@ inline void* TaskHelper::functionWrapper(void* pTaskHelper) {
 
 // Core Implementation
 inline Core::Core(QObject* parent)
-    : QObject(parent) {}
+    : QObject(parent), m_ownerThreadId(std::this_thread::get_id()) {}
 
 inline void Core::onStarted(StartedCallback callback) {
     m_startedCallback = std::move(callback);
@@ -407,10 +409,8 @@ inline void Core::onStopTimedOut(StopTimedOutCallback callback) {
 
 inline Core::~Core() {
     // Best-effort synchronous shutdown to avoid destroying QObject children while worker threads are still running.
-    if (QThread::currentThread() != thread()) {
-        qWarning() << "Core::~Core - called from non-owner thread. owner =" << thread()
-                   << ", current =" << QThread::currentThread()
-                   << ". Forcing stop flags only.";
+    if (std::this_thread::get_id() != m_ownerThreadId) {
+        qWarning() << "Core::~Core - called from non-owner thread. Forcing stop flags only.";
         for (const auto& pTask : std::as_const(m_activeTaskList)) {
             pTask->m_stopFlag.store(true);
         }
@@ -472,12 +472,10 @@ inline Core::~Core() {
 }
 
 inline bool Core::ensureCalledFromOwnerThread(const char* method) const {
-    if (QThread::currentThread() == thread()) {
+    if (std::this_thread::get_id() == m_ownerThreadId) {
         return true;
     }
-    qWarning() << "Core::" << method
-               << "- called from non-owner thread. owner =" << thread()
-               << ", current =" << QThread::currentThread();
+    qWarning() << "Core::" << method << "- called from non-owner thread.";
     return false;
 }
 
