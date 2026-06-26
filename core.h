@@ -24,9 +24,6 @@
 
 // --- Import Qt headers ---
 #include <QObject>
-#include <QVariant>
-#include <QList>
-#include <QMetaType>
 #include <QTimer>
 #include <QMetaObject>
 
@@ -129,23 +126,6 @@ TaskArgs makeTaskArgs(Args&&... args) {
     return taskArgs;
 }
 }
-
-// --- Templates for checking convertibility ---
-template<typename T>
-struct all_convertible_to {
-    template<typename... Args>
-    static constexpr bool check() {
-        return std::conjunction_v<std::is_convertible<Args, T>...>;
-    }
-};
-
-template<>
-struct all_convertible_to<QVariant> {
-    template<typename... Args>
-    static constexpr bool check() {
-        return std::conjunction_v<std::disjunction<std::is_convertible<Args, QVariant>, std::bool_constant<QMetaTypeId<Args>::Defined>>...>;
-    }
-};
 
 template<int N>
 struct placeholder {};
@@ -280,17 +260,14 @@ private:
         std::any m_function;
         TaskGroup m_group;
         TaskStopTimeout m_stopTimeout;
-        std::function<QVariant(const TaskResult&)> m_resultToVariant;
     };
 
     struct Task {
-        Task(std::function<TaskResult()> functionBound, TaskType type, TaskGroup group, TaskArgs stdArgs = {}, std::function<QList<QVariant>()> argsToVariantList = {}, std::function<QVariant(const TaskResult&)> resultToVariant = {})
+        Task(std::function<TaskResult()> functionBound, TaskType type, TaskGroup group, TaskArgs stdArgs = {})
             : m_functionBound(std::move(functionBound))
             , m_type(type)
             , m_group(group)
             , m_stdArgs(std::move(stdArgs))
-            , m_argsToVariantList(std::move(argsToVariantList))
-            , m_resultToVariant(std::move(resultToVariant))
             , m_state(TaskState::Inactive) {
 
             static TaskId id_counter = 0;
@@ -302,8 +279,6 @@ private:
         TaskType m_type;
         TaskGroup m_group;
         TaskArgs m_stdArgs;
-        std::function<QList<QVariant>()> m_argsToVariantList;
-        std::function<QVariant(const TaskResult&)> m_resultToVariant;
     #ifdef Q_OS_WIN
         HANDLE m_threadHandle = nullptr;
         DWORD m_threadId = 0;
@@ -340,7 +315,7 @@ private:
     void scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event);
 
     template <typename... Args>
-    void insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, std::function<QVariant(const TaskResult&)> resultToVariant, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
+    void insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
 
     std::unordered_map<TaskType, TaskInfo> m_taskHash;
     std::vector<std::shared_ptr<Task>> m_activeTaskList;
@@ -356,13 +331,6 @@ private:
     TerminatedCallback m_terminatedCallback;
     StopRequestedCallback m_stopRequestedCallback;
     StopTimedOutCallback m_stopTimedOutCallback;
-
-signals:
-    void finishedTask(TaskId id, TaskType type, QList<QVariant> argsList = {}, QVariant result = QVariant());
-    void startedTask(TaskId id, TaskType type, QList<QVariant> argsList = {});
-    void terminatedTask(TaskId id, TaskType type, QList<QVariant> argsList = {});
-    void stopRequestedTask(TaskId id, TaskType type, QList<QVariant> argsList = {});
-    void stopTimedOutTask(TaskId id, TaskType type, QList<QVariant> argsList = {}, TaskStopTimeout timeout = kDefaultStopTimeout);
 };
 
 // --- Class method implementations *after* class declarations ---
@@ -615,8 +583,6 @@ inline void Core::publishStarted(const Task& task) {
     if (m_startedCallback) {
         m_startedCallback(event);
     }
-    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
-    emit startedTask(event.id, event.type, qtArgs);
 }
 
 inline void Core::publishFinished(const Task& task, TaskResult result) {
@@ -624,9 +590,6 @@ inline void Core::publishFinished(const Task& task, TaskResult result) {
     if (m_finishedCallback) {
         m_finishedCallback(event);
     }
-    const QVariant qtResult = task.m_resultToVariant ? task.m_resultToVariant(event.result) : QVariant();
-    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
-    emit finishedTask(event.id, event.type, qtArgs, qtResult);
 }
 
 inline void Core::publishTerminated(const Task& task) {
@@ -634,8 +597,6 @@ inline void Core::publishTerminated(const Task& task) {
     if (m_terminatedCallback) {
         m_terminatedCallback(event);
     }
-    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
-    emit terminatedTask(event.id, event.type, qtArgs);
 }
 
 inline void Core::publishStopRequested(const Task& task) {
@@ -643,8 +604,6 @@ inline void Core::publishStopRequested(const Task& task) {
     if (m_stopRequestedCallback) {
         m_stopRequestedCallback(event);
     }
-    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
-    emit stopRequestedTask(event.id, event.type, qtArgs);
 }
 
 inline void Core::publishStopTimedOut(const Task& task, TaskStopTimeout timeout) {
@@ -652,8 +611,6 @@ inline void Core::publishStopTimedOut(const Task& task, TaskStopTimeout timeout)
     if (m_stopTimedOutCallback) {
         m_stopTimedOutCallback(event);
     }
-    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
-    emit stopTimedOutTask(event.id, event.type, qtArgs, event.timeout);
 }
 
 template <typename R, typename... Args>
@@ -663,36 +620,18 @@ void Core::registerTask(TaskType taskType, std::function<R(Args...)> taskFunctio
     }
 
     std::function<TaskResult(std::remove_reference_t<Args>...)> f;
-    std::function<QVariant(const TaskResult&)> resultToVariant;
-
     if constexpr (std::is_void_v<R>) {
         f = [taskFunction](std::remove_reference_t<Args>... args) -> TaskResult {
             taskFunction(args...);
             return TaskResult{};
         };
-        resultToVariant = [](const TaskResult&) -> QVariant {
-            return QVariant();
-        };
-    } else if constexpr (std::is_convertible_v<R, QVariant>) {
-        f = [taskFunction](std::remove_reference_t<Args>... args) -> TaskResult {
-            return TaskResult(taskFunction(args...));
-        };
-        resultToVariant = [](const TaskResult& result) -> QVariant {
-            return QVariant(std::any_cast<R>(result));
-        };
-    } else if constexpr (QMetaTypeId<R>::Defined) {
-        f = [taskFunction](std::remove_reference_t<Args>... args) -> TaskResult {
-            return TaskResult(taskFunction(args...));
-        };
-        resultToVariant = [](const TaskResult& result) -> QVariant {
-            return QVariant::fromValue(std::any_cast<R>(result));
-        };
     } else {
-        core_detail::logWarning() << "Core::registerTask - Not convertible return type for task type:" << taskType;
-        throw std::logic_error("Not convertible return type");
+        f = [taskFunction](std::remove_reference_t<Args>... args) -> TaskResult {
+            return TaskResult(taskFunction(args...));
+        };
     }
 
-    insertToTaskHash(taskType, std::move(f), std::move(resultToVariant), taskGroup, taskStopTimeout);
+    insertToTaskHash(taskType, std::move(f), taskGroup, taskStopTimeout);
 }
 
 template <typename R, typename... Args>
@@ -772,26 +711,12 @@ void Core::addTask(TaskType taskType, Args... args) {
         auto taskFunction = std::any_cast<std::function<TaskResult(Args...)>>(storedFuncAny);
         TaskArgs stdArgs = core_detail::makeTaskArgs(args...);
 
-        std::function<QList<QVariant>()> argsToVariantList;
-        if constexpr (all_convertible_to<QVariant>::check<Args...>()) {
-            argsToVariantList = [args...]() -> QList<QVariant> {
-                return { QVariant::fromValue(args)... };
-            };
-        } else {
-            core_detail::logWarning() << "Core::addTask - Arguments are not convertible to QList<QVariant> for task type:" << taskType;
-            argsToVariantList = []() -> QList<QVariant> {
-                return {};
-            };
-        }
-
         auto taskFunctionBound = std::bind(taskFunction, args...);
         auto pTask = std::make_shared<Task>(
             std::move(taskFunctionBound),
             taskType,
             taskInfo.m_group,
-            std::move(stdArgs),
-            std::move(argsToVariantList),
-            taskInfo.m_resultToVariant
+            std::move(stdArgs)
         );
 
         bool start = std::none_of(m_activeTaskList.begin(), m_activeTaskList.end(), [group = pTask->m_group](const auto& pActiveTask) {
@@ -1288,7 +1213,6 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
     if (pTask->m_threadHandle == NULL) {
         core_detail::logWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". GetLastError:" << GetLastError();
         removeActiveTask(pTask);
-        // emit taskCreationFailed(...);
         startQueuedTask();
         delete pTaskHelper;
         return; // Abort StartTask execution
@@ -1300,7 +1224,6 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
     if (result != 0) {
         core_detail::logWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". Error code:" << result;
         removeActiveTask(pTask);
-        // emit taskCreationFailed(...);
         startQueuedTask();
         delete pTaskHelper;
         return; // Abort StartTask execution
@@ -1333,7 +1256,7 @@ inline void Core::startQueuedTask() {
 }
 
 template <typename... Args>
-void Core::insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, std::function<QVariant(const TaskResult&)> resultToVariant, TaskGroup taskGroup, TaskStopTimeout taskStopTimeout) {
+void Core::insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, TaskGroup taskGroup, TaskStopTimeout taskStopTimeout) {
     if (m_taskHash.find(taskType) != m_taskHash.cend()) {
         core_detail::logWarning() << "Core::registerTask - Task type is already registered:" << taskType;
         throw std::logic_error("Task type is already registered");
@@ -1346,7 +1269,7 @@ void Core::insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)
         normalizedStopTimeout = kDefaultStopTimeout;
     }
 
-    m_taskHash.emplace(taskType, TaskInfo{taskFunction, taskGroup, normalizedStopTimeout, std::move(resultToVariant)});
+    m_taskHash.emplace(taskType, TaskInfo{taskFunction, taskGroup, normalizedStopTimeout});
 }
 
 #endif // CORE_H
