@@ -1,10 +1,57 @@
 #include <QtTest/QtTest>
-#include <QSignalSpy>
 #include <QThread>
 #include <QElapsedTimer>
 #include <atomic>
+#include <vector>
 
 #include "../core.h"
+
+namespace {
+struct CoreEventRecorder {
+    std::vector<StartedEvent> started;
+    std::vector<FinishedEvent> finished;
+    std::vector<TerminatedEvent> terminated;
+    std::vector<StopRequestedEvent> stopRequested;
+    std::vector<StopTimedOutEvent> stopTimedOut;
+
+    void attach(Core& core) {
+        core.onStarted([this](const StartedEvent& event) {
+            started.push_back(event);
+        });
+        core.onFinished([this](const FinishedEvent& event) {
+            finished.push_back(event);
+        });
+        core.onTerminated([this](const TerminatedEvent& event) {
+            terminated.push_back(event);
+        });
+        core.onStopRequested([this](const StopRequestedEvent& event) {
+            stopRequested.push_back(event);
+        });
+        core.onStopTimedOut([this](const StopTimedOutEvent& event) {
+            stopTimedOut.push_back(event);
+        });
+    }
+};
+
+template <typename Predicate>
+bool waitUntil(Core& core, Predicate predicate, int timeoutMs) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        core.processEvents();
+        if (predicate()) {
+            return true;
+        }
+        QTest::qWait(1);
+    }
+    core.processEvents();
+    return predicate();
+}
+
+int firstArgAsInt(const TaskArgs& args) {
+    return std::any_cast<int>(args.at(0));
+}
+}
 
 class CoreTests final : public QObject {
     Q_OBJECT
@@ -29,20 +76,20 @@ private slots:
 
 void CoreTests::executesRegisteredTaskAndEmitsFinished() {
     Core core;
+    CoreEventRecorder events;
+    events.attach(core);
+
     core.registerTask(1, [](int value) -> int {
         return value * 2;
     });
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QVERIFY(finishedSpy.isValid());
-
     core.addTask(1, 21);
 
-    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 2000);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 2000));
 
-    const QList<QVariant> event = finishedSpy.takeFirst();
-    QCOMPARE(event.at(1).toInt(), 1);
-    QCOMPARE(event.at(3).toInt(), 42);
+    const FinishedEvent& event = events.finished.front();
+    QCOMPARE(event.type, 1);
+    QCOMPARE(std::any_cast<int>(event.result), 42);
 }
 
 void CoreTests::invokesStdCallbacksWithAnyPayload() {
@@ -72,7 +119,7 @@ void CoreTests::invokesStdCallbacksWithAnyPayload() {
     core.addTask(2, 37);
 
     QVERIFY(startedSeen);
-    QTRY_VERIFY_WITH_TIMEOUT(finishedSeen, 2000);
+    QVERIFY(waitUntil(core, [&finishedSeen]() { return finishedSeen; }, 2000));
 }
 
 void CoreTests::serializesTasksWithinSameGroup() {
@@ -93,13 +140,13 @@ void CoreTests::serializesTasksWithinSameGroup() {
     core.registerTask(10, groupedTask, 7);
     core.registerTask(11, groupedTask, 7);
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QVERIFY(finishedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(10);
     core.addTask(11);
 
-    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 2, 5000);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 2; }, 5000));
     QCOMPARE(maxInGroup.load(), 1);
 }
 
@@ -116,22 +163,19 @@ void CoreTests::cancelTaskByIdStopsCooperatively() {
         return 14;
     }, 14, 100);
 
-    QSignalSpy startedSpy(&core, &Core::startedTask);
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QVERIFY(startedSpy.isValid());
-    QVERIFY(finishedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(14);
-    QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 2000);
+    QVERIFY(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
 
-    const QList<QVariant> startedEvent = startedSpy.takeFirst();
-    const auto id = static_cast<TaskId>(startedEvent.at(0).toLongLong());
+    const auto id = events.started.front().id;
     core.cancelTaskById(id);
 
-    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 5000);
-    const QList<QVariant> event = finishedSpy.takeFirst();
-    QCOMPARE(event.at(1).toInt(), 14);
-    QCOMPARE(event.at(3).toInt(), -14);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 5000));
+    const FinishedEvent& event = events.finished.front();
+    QCOMPARE(event.type, 14);
+    QCOMPARE(std::any_cast<int>(event.result), -14);
 }
 
 void CoreTests::stopsTaskCooperativelyByFlag() {
@@ -147,20 +191,18 @@ void CoreTests::stopsTaskCooperativelyByFlag() {
         return 1;
     }, 20, 80);
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QSignalSpy terminatedSpy(&core, &Core::terminatedTask);
-    QVERIFY(finishedSpy.isValid());
-    QVERIFY(terminatedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(20);
     QTest::qWait(30);
     core.stopTaskByType(20);
 
-    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 5000);
-    QCOMPARE(terminatedSpy.count(), 0);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 5000));
+    QCOMPARE(events.terminated.size(), static_cast<std::size_t>(0));
 
-    const QList<QVariant> event = finishedSpy.takeFirst();
-    QCOMPARE(event.at(3).toInt(), -1);
+    const FinishedEvent& event = events.finished.front();
+    QCOMPARE(std::any_cast<int>(event.result), -1);
 }
 
 void CoreTests::stopAllTasksStopsQueuedAndActive() {
@@ -176,10 +218,8 @@ void CoreTests::stopAllTasksStopsQueuedAndActive() {
         return tag;
     }, 30, 200);
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QSignalSpy terminatedSpy(&core, &Core::terminatedTask);
-    QVERIFY(finishedSpy.isValid());
-    QVERIFY(terminatedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(30, 1);
     core.addTask(30, 2);
@@ -187,13 +227,12 @@ void CoreTests::stopAllTasksStopsQueuedAndActive() {
     QTest::qWait(25);
     core.stopAllTasks();
 
-    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() >= 1, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(terminatedSpy.count() >= 1, 5000);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
+    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
 
     bool queuedTerminated = false;
-    for (const QList<QVariant>& event : terminatedSpy) {
-        const QVariantList args = event.at(2).toList();
-        if (!args.isEmpty() && args.first().toInt() == 2) {
+    for (const TerminatedEvent& event : events.terminated) {
+        if (!event.args.empty() && firstArgAsInt(event.args) == 2) {
             queuedTerminated = true;
             break;
         }
@@ -201,10 +240,9 @@ void CoreTests::stopAllTasksStopsQueuedAndActive() {
     QVERIFY(queuedTerminated);
 
     bool activeStoppedCooperatively = false;
-    for (const QList<QVariant>& event : finishedSpy) {
-        const QVariantList args = event.at(2).toList();
-        const int result = event.at(3).toInt();
-        if (!args.isEmpty() && args.first().toInt() == 1 && result == -1) {
+    for (const FinishedEvent& event : events.finished) {
+        const int result = std::any_cast<int>(event.result);
+        if (!event.args.empty() && firstArgAsInt(event.args) == 1 && result == -1) {
             activeStoppedCooperatively = true;
             break;
         }
@@ -229,22 +267,24 @@ void CoreTests::stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops() {
         return tag * 10;
     }, 33, 120);
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QSignalSpy startedSpy(&core, &Core::startedTask);
-    QVERIFY(finishedSpy.isValid());
-    QVERIFY(startedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
-    QElapsedTimer sinceStop;
-    qint64 queuedStartedAfterStopMs = -1;
-    QObject::connect(&core, &Core::startedTask, &core, [&sinceStop, &queuedStartedAfterStopMs](TaskId, TaskType, const QVariantList& argsList) {
-        if (argsList.isEmpty() || argsList.first().toInt() != 2) {
+    bool stopTimerStarted = false;
+    auto sinceStop = std::chrono::steady_clock::time_point{};
+    long long queuedStartedAfterStopMs = -1;
+    core.onStarted([&events, &stopTimerStarted, &sinceStop, &queuedStartedAfterStopMs](const StartedEvent& event) {
+        events.started.push_back(event);
+        if (event.args.empty() || firstArgAsInt(event.args) != 2) {
             return;
         }
-        if (!sinceStop.isValid()) {
+        if (!stopTimerStarted) {
             return;
         }
         if (queuedStartedAfterStopMs < 0) {
-            queuedStartedAfterStopMs = sinceStop.elapsed();
+            queuedStartedAfterStopMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - sinceStop
+            ).count();
         }
     });
 
@@ -252,21 +292,21 @@ void CoreTests::stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops() {
     core.addTask(34, 2); // queued in same group
 
     QTest::qWait(20);
-    sinceStop.start();
+    sinceStop = std::chrono::steady_clock::now();
+    stopTimerStarted = true;
     core.stopTasks();
 
-    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 2, 5000);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 2; }, 5000));
     QVERIFY(queuedStartedAfterStopMs >= 100);
 
     bool activeStopped = false;
     bool queuedResumed = false;
-    for (const QList<QVariant>& event : finishedSpy) {
-        const QVariantList args = event.at(2).toList();
-        if (args.isEmpty()) {
+    for (const FinishedEvent& event : events.finished) {
+        if (event.args.empty()) {
             continue;
         }
-        const int tag = args.first().toInt();
-        const int result = event.at(3).toInt();
+        const int tag = firstArgAsInt(event.args);
+        const int result = std::any_cast<int>(event.result);
         if (tag == 1 && result == -1) {
             activeStopped = true;
         }
@@ -306,10 +346,8 @@ void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
         return tag * 10;
     }, 2, 200);
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QSignalSpy terminatedSpy(&core, &Core::terminatedTask);
-    QVERIFY(finishedSpy.isValid());
-    QVERIFY(terminatedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(40, 1);
     core.addTask(41, 2);
@@ -318,13 +356,12 @@ void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
     QTest::qWait(25);
     core.stopTasksByGroup(1, true);
 
-    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() >= 2, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(terminatedSpy.count() >= 1, 5000);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 2; }, 5000));
+    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
 
     bool group1QueuedTerminated = false;
-    for (const QList<QVariant>& event : terminatedSpy) {
-        const QVariantList args = event.at(2).toList();
-        if (!args.isEmpty() && args.first().toInt() == 2) {
+    for (const TerminatedEvent& event : events.terminated) {
+        if (!event.args.empty() && firstArgAsInt(event.args) == 2) {
             group1QueuedTerminated = true;
             break;
         }
@@ -333,13 +370,12 @@ void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
 
     bool group1ActiveStopped = false;
     bool group2Completed = false;
-    for (const QList<QVariant>& event : finishedSpy) {
-        const QVariantList args = event.at(2).toList();
-        const int result = event.at(3).toInt();
-        if (!args.isEmpty() && args.first().toInt() == 1 && result == -1) {
+    for (const FinishedEvent& event : events.finished) {
+        const int result = std::any_cast<int>(event.result);
+        if (!event.args.empty() && firstArgAsInt(event.args) == 1 && result == -1) {
             group1ActiveStopped = true;
         }
-        if (!args.isEmpty() && args.first().toInt() == 3 && result == 30) {
+        if (!event.args.empty() && firstArgAsInt(event.args) == 3 && result == 30) {
             group2Completed = true;
         }
     }
@@ -370,23 +406,20 @@ void CoreTests::cancelTasksByGroupAliasWorks() {
         return tag;
     }, 9, 150);
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QSignalSpy terminatedSpy(&core, &Core::terminatedTask);
-    QVERIFY(finishedSpy.isValid());
-    QVERIFY(terminatedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(45, 1);
     core.addTask(46, 2);
     QTest::qWait(20);
     core.cancelTasksByGroup(9, true);
 
-    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() >= 1, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(terminatedSpy.count() >= 1, 5000);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
+    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
 
     bool queuedCancelled = false;
-    for (const QList<QVariant>& event : terminatedSpy) {
-        const QVariantList args = event.at(2).toList();
-        if (!args.isEmpty() && args.first().toInt() == 2) {
+    for (const TerminatedEvent& event : events.terminated) {
+        if (!event.args.empty() && firstArgAsInt(event.args) == 2) {
             queuedCancelled = true;
             break;
         }
@@ -408,18 +441,16 @@ void CoreTests::cancelAllTasksAliasWorks() {
         return tag;
     }, 10, 150);
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QSignalSpy terminatedSpy(&core, &Core::terminatedTask);
-    QVERIFY(finishedSpy.isValid());
-    QVERIFY(terminatedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(47, 1);
     core.addTask(47, 2); // queued in same group
     QTest::qWait(20);
     core.cancelAllTasks();
 
-    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() >= 1, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(terminatedSpy.count() >= 1, 5000);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
+    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
 }
 void CoreTests::unregisterTaskFailsForActiveAndQueued() {
     Core core;
@@ -463,10 +494,10 @@ void CoreTests::unregisterTaskFailsForActiveAndQueued() {
     QTest::qWait(20);
     QVERIFY(!core.unregisterTask(52));
 
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QVERIFY(finishedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
     core.stopAllTasks();
-    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() >= 2, 5000);
+    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 2; }, 5000));
 }
 
 void CoreTests::registerTaskWithNullObjectThrows() {
@@ -523,27 +554,22 @@ void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() 
         return 82;
     }, 82, 80);
 
-    QSignalSpy startedSpy(&core, &Core::startedTask);
-    QSignalSpy stopTimedOutSpy(&core, &Core::stopTimedOutTask);
-    QSignalSpy terminatedSpy(&core, &Core::terminatedTask);
-    QVERIFY(startedSpy.isValid());
-    QVERIFY(stopTimedOutSpy.isValid());
-    QVERIFY(terminatedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(82);
-    QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 2000);
-    const QList<QVariant> startedEvent = startedSpy.takeFirst();
-    const auto id = static_cast<TaskId>(startedEvent.at(0).toLongLong());
+    QVERIFY(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
+    const auto id = events.started.front().id;
 
     core.terminateTaskById(id);
 
-    QTRY_COMPARE_WITH_TIMEOUT(stopTimedOutSpy.count(), 1, 3000);
-    QCOMPARE(terminatedSpy.count(), 0);
+    QVERIFY(waitUntil(core, [&events]() { return events.stopTimedOut.size() == 1; }, 3000));
+    QCOMPARE(events.terminated.size(), static_cast<std::size_t>(0));
     QVERIFY(!core.isIdle());
 
     core.setAllowForceTermination(true);
     core.terminateTaskById(id);
-    QTRY_COMPARE_WITH_TIMEOUT(terminatedSpy.count(), 1, 3000);
+    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
     QVERIFY(core.isIdle());
 }
 
@@ -558,24 +584,19 @@ void CoreTests::terminateTaskByIdForceStopsNonCooperativeTask() {
         return 81;
     }, 81, 200);
 
-    QSignalSpy startedSpy(&core, &Core::startedTask);
-    QSignalSpy finishedSpy(&core, &Core::finishedTask);
-    QSignalSpy terminatedSpy(&core, &Core::terminatedTask);
-    QVERIFY(startedSpy.isValid());
-    QVERIFY(finishedSpy.isValid());
-    QVERIFY(terminatedSpy.isValid());
+    CoreEventRecorder events;
+    events.attach(core);
 
     core.addTask(81);
-    QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 2000);
+    QVERIFY(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
 
-    const QList<QVariant> startedEvent = startedSpy.takeFirst();
-    const auto id = static_cast<TaskId>(startedEvent.at(0).toLongLong());
+    const auto id = events.started.front().id;
 
     QTest::qWait(30);
     core.terminateTaskById(id);
 
-    QTRY_COMPARE_WITH_TIMEOUT(terminatedSpy.count(), 1, 3000);
-    QVERIFY(finishedSpy.count() == 0 || finishedSpy.count() == 1);
+    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
+    QVERIFY(events.finished.size() == 0 || events.finished.size() == 1);
     QVERIFY(core.isIdle());
 }
 
