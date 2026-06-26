@@ -26,7 +26,6 @@
 #include <QMetaType>
 #include <QDebug>
 #include <QTimer>
-#include <QElapsedTimer>
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QMetaObject>
@@ -437,11 +436,16 @@ inline Core::~Core() {
         }
     }
 
-    QElapsedTimer waitTimer;
-    waitTimer.start();
+    const auto waitStartedAt = std::chrono::steady_clock::now();
     constexpr TaskStopTimeout kDtorWaitMs = 2000;
 
-    while (!m_activeTaskList.empty() && waitTimer.elapsed() < kDtorWaitMs) {
+    auto elapsedWaitMs = [&waitStartedAt]() -> TaskStopTimeout {
+        return static_cast<TaskStopTimeout>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - waitStartedAt).count()
+        );
+    };
+
+    while (!m_activeTaskList.empty() && elapsedWaitMs() < kDtorWaitMs) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -461,7 +465,7 @@ inline Core::~Core() {
         return;
     }
 
-    while (!m_activeTaskList.empty() && waitTimer.elapsed() < (kDtorWaitMs * 2)) {
+    while (!m_activeTaskList.empty() && elapsedWaitMs() < (kDtorWaitMs * 2)) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -1047,11 +1051,10 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
         return;
     }
 
-    auto started = std::make_shared<QElapsedTimer>();
-    started->start();
+    const auto startedAt = std::chrono::steady_clock::now();
     auto checker = std::make_shared<std::function<void()>>();
 
-    *checker = [this, pTask, timeout, started, checker]() {
+    *checker = [this, pTask, timeout, startedAt, checker]() {
         if (pTask->m_state == TaskState::Inactive
             || pTask->m_state == TaskState::Finished
             || pTask->m_state == TaskState::Terminated) {
@@ -1082,7 +1085,11 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
             return;
         }
 
-        if (started->elapsed() >= timeout) {
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startedAt
+        ).count();
+
+        if (elapsedMs >= timeout) {
             pTask->m_state = TaskState::StopTimedOut;
             qWarning() << QString("Task %1 did not stop after terminate request within timeout (%2 ms)")
                               .arg(QString::number(pTask->m_id)).arg(timeout);
