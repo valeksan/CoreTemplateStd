@@ -1046,7 +1046,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
 
     if (!terminationRequested) {
         pTask->m_state = TaskState::StopTimedOut;
-        qWarning() << QString("Task %1 terminate request was rejected by platform API").arg(QString::number(pTask->m_id));
+        qWarning() << "Task" << pTask->m_id << "terminate request was rejected by platform API";
         publishStopTimedOut(*pTask, timeout);
         return;
     }
@@ -1091,8 +1091,8 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
 
         if (elapsedMs >= timeout) {
             pTask->m_state = TaskState::StopTimedOut;
-            qWarning() << QString("Task %1 did not stop after terminate request within timeout (%2 ms)")
-                              .arg(QString::number(pTask->m_id)).arg(timeout);
+            qWarning() << "Task" << pTask->m_id
+                       << "did not stop after terminate request within timeout" << timeout << "ms";
             publishStopTimedOut(*pTask, timeout);
             return;
         }
@@ -1125,31 +1125,30 @@ inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
     QTimer::singleShot(timeout, this, [this, pTask, timeout]() {
         switch (pTask->m_state) {
         case TaskState::Finished:
-            qDebug() << QString("Task %1 was successfully stopped").arg(QString::number(pTask->m_id));
+            qDebug() << "Task" << pTask->m_id << "was successfully stopped";
             break;
         case TaskState::Terminated:
-            qDebug() << QString("Task %1 was terminated").arg(QString::number(pTask->m_id));
+            qDebug() << "Task" << pTask->m_id << "was terminated";
             break;
         case TaskState::StopTimedOut:
-            qDebug() << QString("Task %1 stop already timed out").arg(QString::number(pTask->m_id));
+            qDebug() << "Task" << pTask->m_id << "stop already timed out";
             break;
         case TaskState::StopRequested:
         case TaskState::Active:
             if (!m_allowForceTermination) {
                 pTask->m_state = TaskState::StopTimedOut;
-                qWarning() << QString("Task %1 stop timed out; force termination is disabled").arg(QString::number(pTask->m_id));
+                qWarning() << "Task" << pTask->m_id << "stop timed out; force termination is disabled";
                 publishStopTimedOut(*pTask, timeout);
                 break;
             }
-            qDebug() << QString("Task %1 was not stopped, terminating").arg(QString::number(pTask->m_id));
+            qDebug() << "Task" << pTask->m_id << "was not stopped, terminating";
             terminateTask(pTask);
             if (pTask->m_state == TaskState::Active || pTask->m_state == TaskState::StopRequested) {
-                qDebug() << QString("Task %1 terminate request is in progress")
-                                .arg(QString::number(pTask->m_id));
+                qDebug() << "Task" << pTask->m_id << "terminate request is in progress";
             }
             break;
         default:
-            qDebug() << QString("Task %1 unexpected state").arg(QString::number(pTask->m_id));
+            qDebug() << "Task" << pTask->m_id << "unexpected state";
             break;
         }
     });
