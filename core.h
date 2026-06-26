@@ -28,6 +28,7 @@
 #include <QThread>
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QMetaObject>
 
 // --- Threading/Multiprocessing API Headers ---
 #ifdef Q_OS_WIN
@@ -133,12 +134,11 @@ auto bind_placeholders(R (Class::*taskFunction)(Args...) const, Class* taskObj, 
 }
 
 // --- Classes ---
-class TaskHelper final : public QObject {
-    Q_OBJECT
-
+class TaskHelper final {
 public:
-    explicit TaskHelper(std::function<TaskResult()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, QObject* parent = nullptr);
-    const TaskResult& result() const;
+    using FinishedHandler = std::function<void(TaskResult)>;
+
+    explicit TaskHelper(std::function<TaskResult()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, FinishedHandler finishedHandler);
 
 #ifdef Q_OS_WIN
     static DWORD WINAPI functionWrapper(void* pTaskHelper);
@@ -149,14 +149,11 @@ public:
 
 private:
     std::function<TaskResult()> m_function;
-    TaskResult m_result;
+    FinishedHandler m_finishedHandler;
     std::atomic_bool* m_pStopFlag = nullptr;
     std::atomic_bool* m_pThreadExited = nullptr;
     void execute(); // Method declaration
     void markThreadExited() noexcept;
-
-signals:
-    void finished();
 };
 
 /**
@@ -323,12 +320,8 @@ signals:
 // --- Class method implementations *after* class declarations ---
 
 // TaskHelper Implementation
-inline TaskHelper::TaskHelper(std::function<TaskResult()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, QObject* parent)
-    : QObject(parent), m_function(function), m_pStopFlag(pStopFlag), m_pThreadExited(pThreadExited) {}
-
-inline const TaskResult& TaskHelper::result() const {
-    return m_result;
-}
+inline TaskHelper::TaskHelper(std::function<TaskResult()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, FinishedHandler finishedHandler)
+    : m_function(function), m_finishedHandler(std::move(finishedHandler)), m_pStopFlag(pStopFlag), m_pThreadExited(pThreadExited) {}
 
 inline void TaskHelper::markThreadExited() noexcept {
     if (m_pThreadExited) {
@@ -338,8 +331,9 @@ inline void TaskHelper::markThreadExited() noexcept {
 
 inline void TaskHelper::execute() {
     core_detail::g_currentStopFlag = m_pStopFlag;
+    TaskResult result;
     try {
-        m_result = m_function();
+        result = m_function();
     } catch (...) {
         core_detail::g_currentStopFlag = nullptr;
         markThreadExited();
@@ -347,13 +341,18 @@ inline void TaskHelper::execute() {
     }
     core_detail::g_currentStopFlag = nullptr;
     markThreadExited();
-    emit finished();
+    if (m_finishedHandler) {
+        m_finishedHandler(std::move(result));
+    }
 }
 
 #ifdef Q_OS_WIN
 inline DWORD TaskHelper::functionWrapper(void* pTaskHelper) {
-    TaskHelper *pThisTaskHelper = qobject_cast<TaskHelper *>(reinterpret_cast<QObject *>(pTaskHelper));
-    if (pThisTaskHelper) pThisTaskHelper->execute();
+    TaskHelper *pThisTaskHelper = reinterpret_cast<TaskHelper *>(pTaskHelper);
+    if (pThisTaskHelper) {
+        pThisTaskHelper->execute();
+        delete pThisTaskHelper;
+    }
     return 0;
 }
 #else
@@ -361,6 +360,7 @@ inline void TaskHelper::cleanupThreadExit(void* pTaskHelper) noexcept {
     TaskHelper *pThisTaskHelper = reinterpret_cast<TaskHelper *>(pTaskHelper);
     if (pThisTaskHelper) {
         pThisTaskHelper->markThreadExited();
+        delete pThisTaskHelper;
     }
 }
 
@@ -1154,15 +1154,19 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
     m_activeTaskList.push_back(pTask);
     pTask->m_state = TaskState::Active;
     pTask->m_threadExited.store(false);
-    TaskHelper* pTaskHelper = new TaskHelper(pTask->m_functionBound, &pTask->m_stopFlag, &pTask->m_threadExited, this); // Add with parent!
-
-    connect(pTaskHelper, &TaskHelper::finished, this, [this, pTask, pTaskHelper]() {
-        pTask->m_state = TaskState::Finished;
-        publishFinished(*pTask, pTaskHelper->result());
-        removeActiveTask(pTask);
-        startQueuedTask();
-        pTaskHelper->deleteLater();
-    });
+    TaskHelper* pTaskHelper = new TaskHelper(
+        pTask->m_functionBound,
+        &pTask->m_stopFlag,
+        &pTask->m_threadExited,
+        [this, pTask](TaskResult result) {
+            QMetaObject::invokeMethod(this, [this, pTask, result = std::move(result)]() mutable {
+                pTask->m_state = TaskState::Finished;
+                publishFinished(*pTask, std::move(result));
+                removeActiveTask(pTask);
+                startQueuedTask();
+            }, Qt::QueuedConnection);
+        }
+    );
 
 #ifdef Q_OS_WIN
     pTask->m_threadHandle = CreateThread(nullptr, 0, &TaskHelper::functionWrapper, pTaskHelper, 0, &pTask->m_threadId);
@@ -1171,7 +1175,7 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
         removeActiveTask(pTask);
         // emit taskCreationFailed(...);
         startQueuedTask();
-        pTaskHelper->deleteLater();
+        delete pTaskHelper;
         return; // Abort StartTask execution
     }
     // If everything is OK, continue...
@@ -1183,7 +1187,7 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
         removeActiveTask(pTask);
         // emit taskCreationFailed(...);
         startQueuedTask();
-        pTaskHelper->deleteLater();
+        delete pTaskHelper;
         return; // Abort StartTask execution
     }
     // If everything is OK, continue...
