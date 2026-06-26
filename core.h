@@ -18,13 +18,13 @@
 #include <unordered_map>
 #include <thread>
 #include <chrono>
+#include <iostream>
 
 // --- Import Qt headers ---
 #include <QObject>
 #include <QVariant>
 #include <QList>
 #include <QMetaType>
-#include <QDebug>
 #include <QTimer>
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -48,6 +48,41 @@ using TaskResult = std::any;
 
 namespace core_detail {
 inline thread_local std::atomic_bool* g_currentStopFlag = nullptr;
+
+class LogLine {
+public:
+    explicit LogLine(std::ostream& stream)
+        : m_stream(stream) {}
+
+    LogLine(const LogLine&) = delete;
+    LogLine& operator=(const LogLine&) = delete;
+
+    ~LogLine() {
+        m_stream << '\n';
+    }
+
+    template <typename T>
+    LogLine& operator<<(const T& value) {
+        if (!m_firstValue) {
+            m_stream << ' ';
+        }
+        m_stream << value;
+        m_firstValue = false;
+        return *this;
+    }
+
+private:
+    std::ostream& m_stream;
+    bool m_firstValue = true;
+};
+
+inline LogLine logWarning() {
+    return LogLine(std::cerr);
+}
+
+inline LogLine logDebug() {
+    return LogLine(std::clog);
+}
 }
 
 // --- Declaring constants ---
@@ -409,7 +444,7 @@ inline void Core::onStopTimedOut(StopTimedOutCallback callback) {
 inline Core::~Core() {
     // Best-effort synchronous shutdown to avoid destroying QObject children while worker threads are still running.
     if (std::this_thread::get_id() != m_ownerThreadId) {
-        qWarning() << "Core::~Core - called from non-owner thread. Forcing stop flags only.";
+        core_detail::logWarning() << "Core::~Core - called from non-owner thread. Forcing stop flags only.";
         for (const auto& pTask : std::as_const(m_activeTaskList)) {
             pTask->m_stopFlag.store(true);
         }
@@ -461,7 +496,7 @@ inline Core::~Core() {
             terminateTask(pTask);
         }
     } else {
-        qWarning() << "Core::~Core - force termination disabled. Active tasks may outlive shutdown window.";
+        core_detail::logWarning() << "Core::~Core - force termination disabled. Active tasks may outlive shutdown window.";
         return;
     }
 
@@ -471,7 +506,7 @@ inline Core::~Core() {
     }
 
     if (!m_activeTaskList.empty()) {
-        qWarning() << "Core::~Core - active tasks still present after shutdown timeout:" << m_activeTaskList.size();
+        core_detail::logWarning() << "Core::~Core - active tasks still present after shutdown timeout:" << m_activeTaskList.size();
     }
 }
 
@@ -479,7 +514,7 @@ inline bool Core::ensureCalledFromOwnerThread(const char* method) const {
     if (std::this_thread::get_id() == m_ownerThreadId) {
         return true;
     }
-    qWarning() << "Core::" << method << "- called from non-owner thread.";
+    core_detail::logWarning() << "Core::" << method << "- called from non-owner thread.";
     return false;
 }
 
@@ -581,7 +616,7 @@ void Core::registerTask(TaskType taskType, std::function<R(Args...)> taskFunctio
             return QVariant::fromValue(std::any_cast<R>(result));
         };
     } else {
-        qWarning() << "Core::registerTask - Not convertible return type for task type:" << taskType;
+        core_detail::logWarning() << "Core::registerTask - Not convertible return type for task type:" << taskType;
         throw std::logic_error("Not convertible return type");
     }
 
@@ -597,7 +632,7 @@ void Core::registerTask(TaskType taskType, R (*taskFunction)(Args...), TaskGroup
 template <typename Class, typename R, typename... Args>
 void Core::registerTask(TaskType taskType, R (Class::*taskMethod)(Args...), Class* taskObj, TaskGroup taskGroup, TaskStopTimeout taskStopTimeout) {
     if (taskObj == nullptr) {
-        qWarning() << "Core::registerTask - task object is null for task type:" << taskType;
+        core_detail::logWarning() << "Core::registerTask - task object is null for task type:" << taskType;
         throw std::logic_error("Task object is null");
     }
 
@@ -610,7 +645,7 @@ void Core::registerTask(TaskType taskType, R (Class::*taskMethod)(Args...), Clas
 template <typename Class, typename R, typename... Args>
 void Core::registerTask(TaskType taskType, R (Class::*taskMethod)(Args...) const, Class* taskObj, TaskGroup taskGroup, TaskStopTimeout taskStopTimeout) {
     if (taskObj == nullptr) {
-        qWarning() << "Core::registerTask - task object is null for task type:" << taskType;
+        core_detail::logWarning() << "Core::registerTask - task object is null for task type:" << taskType;
         throw std::logic_error("Task object is null");
     }
 
@@ -634,13 +669,13 @@ inline bool Core::unregisterTask(TaskType taskType) {
 
     for (const auto& pTask : std::as_const(m_activeTaskList)) {
         if (pTask->m_type == taskType) {
-            qWarning() << "Core::unregisterTask - Cannot unregister active task type:" << taskType;
+            core_detail::logWarning() << "Core::unregisterTask - Cannot unregister active task type:" << taskType;
             return false;
         }
     }
     for (const auto& pTask : std::as_const(m_queuedTaskList)) {
         if (pTask->m_type == taskType) {
-            qWarning() << "Core::unregisterTask - Cannot unregister queued task type:" << taskType;
+            core_detail::logWarning() << "Core::unregisterTask - Cannot unregister queued task type:" << taskType;
             return false;
         }
     }
@@ -655,7 +690,7 @@ void Core::addTask(TaskType taskType, Args... args) {
 
     auto taskInfoIt = m_taskHash.find(taskType);
     if (taskInfoIt == m_taskHash.cend()) {
-        qWarning() << "Core::addTask - Task not registered for type:" << taskType;
+        core_detail::logWarning() << "Core::addTask - Task not registered for type:" << taskType;
         throw std::logic_error("Task not registered");
     }
 
@@ -671,7 +706,7 @@ void Core::addTask(TaskType taskType, Args... args) {
                 return { QVariant::fromValue(args)... };
             };
         } else {
-            qWarning() << "Core::addTask - Arguments are not convertible to QList<QVariant> for task type:" << taskType;
+            core_detail::logWarning() << "Core::addTask - Arguments are not convertible to QList<QVariant> for task type:" << taskType;
             argsToVariantList = []() -> QList<QVariant> {
                 return {};
             };
@@ -697,7 +732,7 @@ void Core::addTask(TaskType taskType, Args... args) {
             m_queuedTaskList.push_back(std::move(pTask));
         }
     } catch (const std::bad_any_cast& e) {
-        qWarning() << "Core::addTask - Bad arguments or function signature mismatch for task type:" << taskType << e.what();
+        core_detail::logWarning() << "Core::addTask - Bad arguments or function signature mismatch for task type:" << taskType << e.what();
         throw std::logic_error("Bad arguments or function signature mismatch");
     }
 }
@@ -713,7 +748,7 @@ inline void Core::terminateTaskById(TaskId id) {
 
     if (auto pTask = activeTaskById(id)) {
         if (!m_allowForceTermination) {
-            qWarning() << "Core::terminateTaskById - force termination is disabled. Requesting cooperative stop for task ID:" << id;
+            core_detail::logWarning() << "Core::terminateTaskById - force termination is disabled. Requesting cooperative stop for task ID:" << id;
             stopTaskById(id);
             return;
         }
@@ -833,7 +868,7 @@ inline void Core::stopTasks() {
             maxTimeout = std::max(maxTimeout, taskInfoIt->second.m_stopTimeout);
         } else {
             maxTimeout = std::max(maxTimeout, static_cast<TaskStopTimeout>(kDefaultStopTimeout));
-            qWarning() << "Core::stopTasks - Missing registration for active task type:" << pTask->m_type;
+            core_detail::logWarning() << "Core::stopTasks - Missing registration for active task type:" << pTask->m_type;
         }
     }
 
@@ -1046,7 +1081,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
 
     if (!terminationRequested) {
         pTask->m_state = TaskState::StopTimedOut;
-        qWarning() << "Task" << pTask->m_id << "terminate request was rejected by platform API";
+        core_detail::logWarning() << "Task" << pTask->m_id << "terminate request was rejected by platform API";
         publishStopTimedOut(*pTask, timeout);
         return;
     }
@@ -1091,7 +1126,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
 
         if (elapsedMs >= timeout) {
             pTask->m_state = TaskState::StopTimedOut;
-            qWarning() << "Task" << pTask->m_id
+            core_detail::logWarning() << "Task" << pTask->m_id
                        << "did not stop after terminate request within timeout" << timeout << "ms";
             publishStopTimedOut(*pTask, timeout);
             return;
@@ -1119,36 +1154,36 @@ inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
     if (taskInfoIt != m_taskHash.cend()) {
         timeout = taskInfoIt->second.m_stopTimeout;
     } else {
-        qWarning() << "Core::stopTask - Missing registration for active task type:" << pTask->m_type;
+        core_detail::logWarning() << "Core::stopTask - Missing registration for active task type:" << pTask->m_type;
     }
 
     QTimer::singleShot(timeout, this, [this, pTask, timeout]() {
         switch (pTask->m_state) {
         case TaskState::Finished:
-            qDebug() << "Task" << pTask->m_id << "was successfully stopped";
+            core_detail::logDebug() << "Task" << pTask->m_id << "was successfully stopped";
             break;
         case TaskState::Terminated:
-            qDebug() << "Task" << pTask->m_id << "was terminated";
+            core_detail::logDebug() << "Task" << pTask->m_id << "was terminated";
             break;
         case TaskState::StopTimedOut:
-            qDebug() << "Task" << pTask->m_id << "stop already timed out";
+            core_detail::logDebug() << "Task" << pTask->m_id << "stop already timed out";
             break;
         case TaskState::StopRequested:
         case TaskState::Active:
             if (!m_allowForceTermination) {
                 pTask->m_state = TaskState::StopTimedOut;
-                qWarning() << "Task" << pTask->m_id << "stop timed out; force termination is disabled";
+                core_detail::logWarning() << "Task" << pTask->m_id << "stop timed out; force termination is disabled";
                 publishStopTimedOut(*pTask, timeout);
                 break;
             }
-            qDebug() << "Task" << pTask->m_id << "was not stopped, terminating";
+            core_detail::logDebug() << "Task" << pTask->m_id << "was not stopped, terminating";
             terminateTask(pTask);
             if (pTask->m_state == TaskState::Active || pTask->m_state == TaskState::StopRequested) {
-                qDebug() << "Task" << pTask->m_id << "terminate request is in progress";
+                core_detail::logDebug() << "Task" << pTask->m_id << "terminate request is in progress";
             }
             break;
         default:
-            qDebug() << "Task" << pTask->m_id << "unexpected state";
+            core_detail::logDebug() << "Task" << pTask->m_id << "unexpected state";
             break;
         }
     });
@@ -1175,7 +1210,7 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
 #ifdef Q_OS_WIN
     pTask->m_threadHandle = CreateThread(nullptr, 0, &TaskHelper::functionWrapper, pTaskHelper, 0, &pTask->m_threadId);
     if (pTask->m_threadHandle == NULL) {
-        qWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". GetLastError:" << GetLastError();
+        core_detail::logWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". GetLastError:" << GetLastError();
         removeActiveTask(pTask);
         // emit taskCreationFailed(...);
         startQueuedTask();
@@ -1187,7 +1222,7 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
     // Checking pthread_create
     int result = pthread_create(&pTask->m_threadHandle, nullptr, &TaskHelper::functionWrapper, pTaskHelper);
     if (result != 0) {
-        qWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". Error code:" << result;
+        core_detail::logWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". Error code:" << result;
         removeActiveTask(pTask);
         // emit taskCreationFailed(...);
         startQueuedTask();
@@ -1224,13 +1259,13 @@ inline void Core::startQueuedTask() {
 template <typename... Args>
 void Core::insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, std::function<QVariant(const TaskResult&)> resultToVariant, TaskGroup taskGroup, TaskStopTimeout taskStopTimeout) {
     if (m_taskHash.find(taskType) != m_taskHash.cend()) {
-        qWarning() << "Core::registerTask - Task type is already registered:" << taskType;
+        core_detail::logWarning() << "Core::registerTask - Task type is already registered:" << taskType;
         throw std::logic_error("Task type is already registered");
     }
 
     TaskStopTimeout normalizedStopTimeout = taskStopTimeout;
     if (normalizedStopTimeout < 0) {
-        qWarning() << "Core::registerTask - Negative stop timeout for task type:"
+        core_detail::logWarning() << "Core::registerTask - Negative stop timeout for task type:"
                    << taskType << ". Using default:" << kDefaultStopTimeout;
         normalizedStopTimeout = kDefaultStopTimeout;
     }
