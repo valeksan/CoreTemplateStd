@@ -11,6 +11,7 @@ class CoreTests final : public QObject {
 
 private slots:
     void executesRegisteredTaskAndEmitsFinished();
+    void invokesStdCallbacksWithAnyPayload();
     void serializesTasksWithinSameGroup();
     void cancelTaskByIdStopsCooperatively();
     void stopsTaskCooperativelyByFlag();
@@ -42,6 +43,36 @@ void CoreTests::executesRegisteredTaskAndEmitsFinished() {
     const QList<QVariant> event = finishedSpy.takeFirst();
     QCOMPARE(event.at(1).toInt(), 1);
     QCOMPARE(event.at(3).toInt(), 42);
+}
+
+void CoreTests::invokesStdCallbacksWithAnyPayload() {
+    Core core;
+    core.registerTask(2, [](int value) -> int {
+        return value + 5;
+    });
+
+    bool startedSeen = false;
+    bool finishedSeen = false;
+
+    core.onStarted([&startedSeen](const StartedEvent& event) {
+        startedSeen = true;
+        QCOMPARE(event.type, 2);
+        QCOMPARE(event.args.size(), static_cast<std::size_t>(1));
+        QCOMPARE(std::any_cast<int>(event.args.at(0)), 37);
+    });
+
+    core.onFinished([&finishedSeen](const FinishedEvent& event) {
+        finishedSeen = true;
+        QCOMPARE(event.type, 2);
+        QCOMPARE(event.args.size(), static_cast<std::size_t>(1));
+        QCOMPARE(std::any_cast<int>(event.args.at(0)), 37);
+        QCOMPARE(std::any_cast<int>(event.result), 42);
+    });
+
+    core.addTask(2, 37);
+
+    QVERIFY(startedSeen);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSeen, 2000);
 }
 
 void CoreTests::serializesTasksWithinSameGroup() {
@@ -550,4 +581,3 @@ void CoreTests::terminateTaskByIdForceStopsNonCooperativeTask() {
 
 QTEST_MAIN(CoreTests)
 #include "core_tests.moc"
-

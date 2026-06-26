@@ -170,8 +170,20 @@ class Core : public QObject {
     Q_OBJECT
 
 public:
+    using StartedCallback = std::function<void(const StartedEvent&)>;
+    using FinishedCallback = std::function<void(const FinishedEvent&)>;
+    using TerminatedCallback = std::function<void(const TerminatedEvent&)>;
+    using StopRequestedCallback = std::function<void(const StopRequestedEvent&)>;
+    using StopTimedOutCallback = std::function<void(const StopTimedOutEvent&)>;
+
     explicit Core(QObject* parent = nullptr);
     ~Core() override;
+
+    void onStarted(StartedCallback callback);
+    void onFinished(FinishedCallback callback);
+    void onTerminated(TerminatedCallback callback);
+    void onStopRequested(StopRequestedCallback callback);
+    void onStopTimedOut(StopTimedOutCallback callback);
 
     template <typename R, typename... Args>
     void registerTask(TaskType taskType, std::function<R(Args...)> taskFunction, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
@@ -280,6 +292,11 @@ private:
     static TerminatedEvent makeTerminatedEvent(const Task& task);
     static StopRequestedEvent makeStopRequestedEvent(const Task& task);
     static StopTimedOutEvent makeStopTimedOutEvent(const Task& task, TaskStopTimeout timeout);
+    void publishStarted(const Task& task);
+    void publishFinished(const Task& task, TaskResult result);
+    void publishTerminated(const Task& task);
+    void publishStopRequested(const Task& task);
+    void publishStopTimedOut(const Task& task, TaskStopTimeout timeout);
 
     template <typename... Args>
     void insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, std::function<QVariant(const TaskResult&)> resultToVariant, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
@@ -289,6 +306,11 @@ private:
     std::vector<std::shared_ptr<Task>> m_queuedTaskList;
     std::atomic_bool m_blockStartTask{false};
     bool m_allowForceTermination = false;
+    StartedCallback m_startedCallback;
+    FinishedCallback m_finishedCallback;
+    TerminatedCallback m_terminatedCallback;
+    StopRequestedCallback m_stopRequestedCallback;
+    StopTimedOutCallback m_stopTimedOutCallback;
 
 signals:
     void finishedTask(TaskId id, TaskType type, QList<QVariant> argsList = {}, QVariant result = QVariant());
@@ -363,6 +385,26 @@ inline void* TaskHelper::functionWrapper(void* pTaskHelper) {
 inline Core::Core(QObject* parent)
     : QObject(parent) {}
 
+inline void Core::onStarted(StartedCallback callback) {
+    m_startedCallback = std::move(callback);
+}
+
+inline void Core::onFinished(FinishedCallback callback) {
+    m_finishedCallback = std::move(callback);
+}
+
+inline void Core::onTerminated(TerminatedCallback callback) {
+    m_terminatedCallback = std::move(callback);
+}
+
+inline void Core::onStopRequested(StopRequestedCallback callback) {
+    m_stopRequestedCallback = std::move(callback);
+}
+
+inline void Core::onStopTimedOut(StopTimedOutCallback callback) {
+    m_stopTimedOutCallback = std::move(callback);
+}
+
 inline Core::~Core() {
     // Best-effort synchronous shutdown to avoid destroying QObject children while worker threads are still running.
     if (QThread::currentThread() != thread()) {
@@ -377,7 +419,7 @@ inline Core::~Core() {
 
     // Remove queued tasks first: they never started.
     for (const auto& pQueuedTask : std::as_const(m_queuedTaskList)) {
-        emit terminatedTask(pQueuedTask->m_id, pQueuedTask->m_type, pQueuedTask->m_argsList);
+        publishTerminated(*pQueuedTask);
     }
     m_queuedTaskList.clear();
 
@@ -391,7 +433,7 @@ inline Core::~Core() {
         pTask->m_stopFlag.store(true);
         if (pTask->m_state == TaskState::Active) {
             pTask->m_state = TaskState::StopRequested;
-            emit stopRequestedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
+            publishStopRequested(*pTask);
         }
     }
 
@@ -457,6 +499,47 @@ inline StopRequestedEvent Core::makeStopRequestedEvent(const Task& task) {
 
 inline StopTimedOutEvent Core::makeStopTimedOutEvent(const Task& task, TaskStopTimeout timeout) {
     return StopTimedOutEvent{task.m_id, task.m_type, task.m_stdArgs, timeout};
+}
+
+inline void Core::publishStarted(const Task& task) {
+    const auto event = makeStartedEvent(task);
+    if (m_startedCallback) {
+        m_startedCallback(event);
+    }
+    emit startedTask(event.id, event.type, task.m_argsList);
+}
+
+inline void Core::publishFinished(const Task& task, TaskResult result) {
+    const auto event = makeFinishedEvent(task, std::move(result));
+    if (m_finishedCallback) {
+        m_finishedCallback(event);
+    }
+    const QVariant qtResult = task.m_resultToVariant ? task.m_resultToVariant(event.result) : QVariant();
+    emit finishedTask(event.id, event.type, task.m_argsList, qtResult);
+}
+
+inline void Core::publishTerminated(const Task& task) {
+    const auto event = makeTerminatedEvent(task);
+    if (m_terminatedCallback) {
+        m_terminatedCallback(event);
+    }
+    emit terminatedTask(event.id, event.type, task.m_argsList);
+}
+
+inline void Core::publishStopRequested(const Task& task) {
+    const auto event = makeStopRequestedEvent(task);
+    if (m_stopRequestedCallback) {
+        m_stopRequestedCallback(event);
+    }
+    emit stopRequestedTask(event.id, event.type, task.m_argsList);
+}
+
+inline void Core::publishStopTimedOut(const Task& task, TaskStopTimeout timeout) {
+    const auto event = makeStopTimedOutEvent(task, timeout);
+    if (m_stopTimedOutCallback) {
+        m_stopTimedOutCallback(event);
+    }
+    emit stopTimedOutTask(event.id, event.type, task.m_argsList, event.timeout);
 }
 
 template <typename R, typename... Args>
@@ -758,7 +841,7 @@ inline void Core::stopAllTasks() {
 
     // Remove queued tasks immediately (they never started, so no stop timeout needed).
     for (const auto& pQueuedTask : std::as_const(m_queuedTaskList)) {
-        emit terminatedTask(pQueuedTask->m_id, pQueuedTask->m_type, pQueuedTask->m_argsList);
+        publishTerminated(*pQueuedTask);
     }
     m_queuedTaskList.clear();
 
@@ -789,7 +872,7 @@ inline void Core::stopTasksByGroup(TaskGroup group, bool includeQueued) {
     for (auto it = m_queuedTaskList.begin(); it != m_queuedTaskList.end();) {
         const auto& pQueuedTask = *it;
         if (pQueuedTask->m_group == group) {
-            emit terminatedTask(pQueuedTask->m_id, pQueuedTask->m_type, pQueuedTask->m_argsList);
+            publishTerminated(*pQueuedTask);
             it = m_queuedTaskList.erase(it);
         } else {
             ++it;
@@ -901,7 +984,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
 
     if (pTask->m_state == TaskState::Active) {
         pTask->m_state = TaskState::StopRequested;
-        emit stopRequestedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
+        publishStopRequested(*pTask);
     }
 
     // Determine timeout from task's registered stop timeout (verification window).
@@ -924,7 +1007,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
             pTask->m_state = TaskState::Terminated;
             CloseHandle(pTask->m_threadHandle);
             pTask->m_threadHandle = nullptr;
-            emit terminatedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
+            publishTerminated(*pTask);
             removeActiveTask(pTask);
             startQueuedTask();
             return;
@@ -939,7 +1022,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
         } else {
             // Thread already not alive, but finishedTask might never be emitted (e.g. pthread_exit/cancel path).
             pTask->m_state = TaskState::Terminated;
-            emit terminatedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
+            publishTerminated(*pTask);
             removeActiveTask(pTask);
             startQueuedTask();
             return;
@@ -952,7 +1035,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
     if (!terminationRequested) {
         pTask->m_state = TaskState::StopTimedOut;
         qWarning() << QString("Task %1 terminate request was rejected by platform API").arg(QString::number(pTask->m_id));
-        emit stopTimedOutTask(pTask->m_id, pTask->m_type, pTask->m_argsList, timeout);
+        publishStopTimedOut(*pTask, timeout);
         return;
     }
 
@@ -985,7 +1068,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
 
         if (!isAlive) {
             pTask->m_state = TaskState::Terminated;
-            emit terminatedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
+            publishTerminated(*pTask);
             removeActiveTask(pTask);
             startQueuedTask();
             return;
@@ -995,7 +1078,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
             pTask->m_state = TaskState::StopTimedOut;
             qWarning() << QString("Task %1 did not stop after terminate request within timeout (%2 ms)")
                               .arg(QString::number(pTask->m_id)).arg(timeout);
-            emit stopTimedOutTask(pTask->m_id, pTask->m_type, pTask->m_argsList, timeout);
+            publishStopTimedOut(*pTask, timeout);
             return;
         }
 
@@ -1013,7 +1096,7 @@ inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
     pTask->m_stopFlag.store(true);
     if (pTask->m_state == TaskState::Active) {
         pTask->m_state = TaskState::StopRequested;
-        emit stopRequestedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
+        publishStopRequested(*pTask);
     }
 
     TaskStopTimeout timeout = kDefaultStopTimeout;
@@ -1040,7 +1123,7 @@ inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
             if (!m_allowForceTermination) {
                 pTask->m_state = TaskState::StopTimedOut;
                 qWarning() << QString("Task %1 stop timed out; force termination is disabled").arg(QString::number(pTask->m_id));
-                emit stopTimedOutTask(pTask->m_id, pTask->m_type, pTask->m_argsList, timeout);
+                publishStopTimedOut(*pTask, timeout);
                 break;
             }
             qDebug() << QString("Task %1 was not stopped, terminating").arg(QString::number(pTask->m_id));
@@ -1065,10 +1148,7 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
 
     connect(pTaskHelper, &TaskHelper::finished, this, [this, pTask, pTaskHelper]() {
         pTask->m_state = TaskState::Finished;
-        const TaskResult& result = pTaskHelper->result();
-        const auto finishedEvent = makeFinishedEvent(*pTask, result);
-        const QVariant qtResult = pTask->m_resultToVariant ? pTask->m_resultToVariant(finishedEvent.result) : QVariant();
-        emit finishedTask(pTask->m_id, pTask->m_type, pTask->m_argsList, qtResult);
+        publishFinished(*pTask, pTaskHelper->result());
         removeActiveTask(pTask);
         startQueuedTask();
         pTaskHelper->deleteLater();
@@ -1100,7 +1180,7 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
     pthread_detach(pTask->m_threadHandle);
 #endif
 
-    emit startedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
+    publishStarted(*pTask);
 }
 
 inline void Core::startQueuedTask() {
