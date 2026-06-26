@@ -333,6 +333,8 @@ private:
     void publishStopRequested(const Task& task);
     void publishStopTimedOut(const Task& task, TaskStopTimeout timeout);
     void postToOwner(std::function<void()> event);
+    void wakeOwnerEventLoop();
+    void scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event);
 
     template <typename... Args>
     void insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, std::function<QVariant(const TaskResult&)> resultToVariant, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
@@ -553,6 +555,19 @@ inline void Core::postToOwner(std::function<void()> event) {
         std::lock_guard<std::mutex> lock(m_eventMutex);
         m_eventQueue.push_back(std::move(event));
     }
+}
+
+inline void Core::wakeOwnerEventLoop() {
+    QMetaObject::invokeMethod(this, [this]() {
+        processEvents();
+    }, Qt::QueuedConnection);
+}
+
+inline void Core::scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event) {
+    QTimer::singleShot(delayMs, this, [this, event = std::move(event)]() mutable {
+        postToOwner(std::move(event));
+        processEvents();
+    });
 }
 
 inline StartedEvent Core::makeStartedEvent(const Task& task) {
@@ -886,17 +901,6 @@ inline void Core::stopTasks() {
         return;
     }
 
-    m_blockStartTask.store(true);
-    QTimer* pTimer = new QTimer(this); // with parent for automatic cleanup!
-    connect(pTimer, &QTimer::timeout, this, [this, pTimer]() {
-        if (isIdle()) { // Use the public method
-            m_blockStartTask.store(false);
-            startQueuedTask();
-            pTimer->stop();
-            pTimer->deleteLater();
-        }
-    });
-
     // Calculating the maximum stop timeout among active tasks
     TaskStopTimeout maxTimeout = 0;
     for (const auto& pTask : std::as_const(m_activeTaskList)) {
@@ -914,8 +918,22 @@ inline void Core::stopTasks() {
         stopTask(pTask);
     }
 
-    // Starting the timer with the maximum timeout
-    pTimer->start(maxTimeout);
+    m_blockStartTask.store(true);
+    auto resumeWhenIdle = std::make_shared<std::function<void()>>();
+    *resumeWhenIdle = [this, maxTimeout, resumeWhenIdle]() {
+        if (isIdle()) {
+            m_blockStartTask.store(false);
+            startQueuedTask();
+            return;
+        }
+        scheduleOnOwnerAfter(maxTimeout, [resumeWhenIdle]() {
+            (*resumeWhenIdle)();
+        });
+    };
+
+    scheduleOnOwnerAfter(maxTimeout, [resumeWhenIdle]() {
+        (*resumeWhenIdle)();
+    });
 }
 
 inline void Core::stopAllTasks() {
@@ -1169,12 +1187,12 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
             return;
         }
 
-        QTimer::singleShot(20, this, [checker]() {
+        scheduleOnOwnerAfter(20, [checker]() {
             (*checker)();
         });
     };
 
-    QTimer::singleShot(0, this, [checker]() {
+    scheduleOnOwnerAfter(0, [checker]() {
         (*checker)();
     });
 }
@@ -1194,7 +1212,7 @@ inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
         core_detail::logWarning() << "Core::stopTask - Missing registration for active task type:" << pTask->m_type;
     }
 
-    QTimer::singleShot(timeout, this, [this, pTask, timeout]() {
+    scheduleOnOwnerAfter(timeout, [this, pTask, timeout]() {
         switch (pTask->m_state) {
         case TaskState::Finished:
             core_detail::logDebug() << "Task" << pTask->m_id << "was successfully stopped";
@@ -1241,9 +1259,7 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
                 removeActiveTask(pTask);
                 startQueuedTask();
             });
-            QMetaObject::invokeMethod(this, [this]() {
-                processEvents();
-            }, Qt::QueuedConnection);
+            wakeOwnerEventLoop();
         }
     );
 
