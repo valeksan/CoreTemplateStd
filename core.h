@@ -246,12 +246,12 @@ private:
     };
 
     struct Task {
-        Task(std::function<TaskResult()> functionBound, TaskType type, TaskGroup group, QList<QVariant> argsList = {}, TaskArgs stdArgs = {}, std::function<QVariant(const TaskResult&)> resultToVariant = {})
+        Task(std::function<TaskResult()> functionBound, TaskType type, TaskGroup group, TaskArgs stdArgs = {}, std::function<QList<QVariant>()> argsToVariantList = {}, std::function<QVariant(const TaskResult&)> resultToVariant = {})
             : m_functionBound(std::move(functionBound))
             , m_type(type)
             , m_group(group)
-            , m_argsList(std::move(argsList))
             , m_stdArgs(std::move(stdArgs))
+            , m_argsToVariantList(std::move(argsToVariantList))
             , m_resultToVariant(std::move(resultToVariant))
             , m_state(TaskState::Inactive) {
 
@@ -263,8 +263,8 @@ private:
         std::function<TaskResult()> m_functionBound;
         TaskType m_type;
         TaskGroup m_group;
-        QList<QVariant> m_argsList;
         TaskArgs m_stdArgs;
+        std::function<QList<QVariant>()> m_argsToVariantList;
         std::function<QVariant(const TaskResult&)> m_resultToVariant;
     #ifdef Q_OS_WIN
         HANDLE m_threadHandle = nullptr;
@@ -506,7 +506,8 @@ inline void Core::publishStarted(const Task& task) {
     if (m_startedCallback) {
         m_startedCallback(event);
     }
-    emit startedTask(event.id, event.type, task.m_argsList);
+    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
+    emit startedTask(event.id, event.type, qtArgs);
 }
 
 inline void Core::publishFinished(const Task& task, TaskResult result) {
@@ -515,7 +516,8 @@ inline void Core::publishFinished(const Task& task, TaskResult result) {
         m_finishedCallback(event);
     }
     const QVariant qtResult = task.m_resultToVariant ? task.m_resultToVariant(event.result) : QVariant();
-    emit finishedTask(event.id, event.type, task.m_argsList, qtResult);
+    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
+    emit finishedTask(event.id, event.type, qtArgs, qtResult);
 }
 
 inline void Core::publishTerminated(const Task& task) {
@@ -523,7 +525,8 @@ inline void Core::publishTerminated(const Task& task) {
     if (m_terminatedCallback) {
         m_terminatedCallback(event);
     }
-    emit terminatedTask(event.id, event.type, task.m_argsList);
+    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
+    emit terminatedTask(event.id, event.type, qtArgs);
 }
 
 inline void Core::publishStopRequested(const Task& task) {
@@ -531,7 +534,8 @@ inline void Core::publishStopRequested(const Task& task) {
     if (m_stopRequestedCallback) {
         m_stopRequestedCallback(event);
     }
-    emit stopRequestedTask(event.id, event.type, task.m_argsList);
+    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
+    emit stopRequestedTask(event.id, event.type, qtArgs);
 }
 
 inline void Core::publishStopTimedOut(const Task& task, TaskStopTimeout timeout) {
@@ -539,7 +543,8 @@ inline void Core::publishStopTimedOut(const Task& task, TaskStopTimeout timeout)
     if (m_stopTimedOutCallback) {
         m_stopTimedOutCallback(event);
     }
-    emit stopTimedOutTask(event.id, event.type, task.m_argsList, event.timeout);
+    const auto qtArgs = task.m_argsToVariantList ? task.m_argsToVariantList() : QList<QVariant>{};
+    emit stopTimedOutTask(event.id, event.type, qtArgs, event.timeout);
 }
 
 template <typename R, typename... Args>
@@ -658,11 +663,16 @@ void Core::addTask(TaskType taskType, Args... args) {
         auto taskFunction = std::any_cast<std::function<TaskResult(Args...)>>(storedFuncAny);
         TaskArgs stdArgs = core_detail::makeTaskArgs(args...);
 
-        QList<QVariant> argsList;
+        std::function<QList<QVariant>()> argsToVariantList;
         if constexpr (all_convertible_to<QVariant>::check<Args...>()) {
-            argsList = { QVariant::fromValue(args)... };
+            argsToVariantList = [args...]() -> QList<QVariant> {
+                return { QVariant::fromValue(args)... };
+            };
         } else {
             qWarning() << "Core::addTask - Arguments are not convertible to QList<QVariant> for task type:" << taskType;
+            argsToVariantList = []() -> QList<QVariant> {
+                return {};
+            };
         }
 
         auto taskFunctionBound = std::bind(taskFunction, args...);
@@ -670,8 +680,8 @@ void Core::addTask(TaskType taskType, Args... args) {
             std::move(taskFunctionBound),
             taskType,
             taskInfo.m_group,
-            std::move(argsList),
             std::move(stdArgs),
+            std::move(argsToVariantList),
             taskInfo.m_resultToVariant
         );
 
