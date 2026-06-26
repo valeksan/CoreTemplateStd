@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.16)
 
 project(CoreTemplatePackageSmoke LANGUAGES CXX)
 enable_testing()
-set(CMAKE_AUTOMOC ON)
 
 find_package(CoreTemplate REQUIRED)
 
