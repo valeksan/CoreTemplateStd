@@ -19,6 +19,8 @@
 #include <thread>
 #include <chrono>
 #include <iostream>
+#include <mutex>
+#include <deque>
 
 // --- Import Qt headers ---
 #include <QObject>
@@ -216,6 +218,7 @@ public:
     void onTerminated(TerminatedCallback callback);
     void onStopRequested(StopRequestedCallback callback);
     void onStopTimedOut(StopTimedOutCallback callback);
+    void processEvents();
 
     template <typename R, typename... Args>
     void registerTask(TaskType taskType, std::function<R(Args...)> taskFunction, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
@@ -329,6 +332,7 @@ private:
     void publishTerminated(const Task& task);
     void publishStopRequested(const Task& task);
     void publishStopTimedOut(const Task& task, TaskStopTimeout timeout);
+    void postToOwner(std::function<void()> event);
 
     template <typename... Args>
     void insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, std::function<QVariant(const TaskResult&)> resultToVariant, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
@@ -339,6 +343,8 @@ private:
     std::atomic_bool m_blockStartTask{false};
     bool m_allowForceTermination = false;
     std::thread::id m_ownerThreadId;
+    std::mutex m_eventMutex;
+    std::deque<std::function<void()>> m_eventQueue;
     StartedCallback m_startedCallback;
     FinishedCallback m_finishedCallback;
     TerminatedCallback m_terminatedCallback;
@@ -441,6 +447,28 @@ inline void Core::onStopTimedOut(StopTimedOutCallback callback) {
     m_stopTimedOutCallback = std::move(callback);
 }
 
+inline void Core::processEvents() {
+    if (!ensureCalledFromOwnerThread("processEvents")) {
+        return;
+    }
+
+    for (;;) {
+        std::function<void()> event;
+        {
+            std::lock_guard<std::mutex> lock(m_eventMutex);
+            if (m_eventQueue.empty()) {
+                return;
+            }
+            event = std::move(m_eventQueue.front());
+            m_eventQueue.pop_front();
+        }
+
+        if (event) {
+            event();
+        }
+    }
+}
+
 inline Core::~Core() {
     // Best-effort synchronous shutdown to avoid destroying QObject children while worker threads are still running.
     if (std::this_thread::get_id() != m_ownerThreadId) {
@@ -516,6 +544,13 @@ inline bool Core::ensureCalledFromOwnerThread(const char* method) const {
     }
     core_detail::logWarning() << "Core::" << method << "- called from non-owner thread.";
     return false;
+}
+
+inline void Core::postToOwner(std::function<void()> event) {
+    {
+        std::lock_guard<std::mutex> lock(m_eventMutex);
+        m_eventQueue.push_back(std::move(event));
+    }
 }
 
 inline StartedEvent Core::makeStartedEvent(const Task& task) {
