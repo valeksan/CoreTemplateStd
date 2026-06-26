@@ -137,7 +137,8 @@ class TaskHelper final : public QObject {
     Q_OBJECT
 
 public:
-    explicit TaskHelper(std::function<QVariant()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, QObject* parent = nullptr);
+    explicit TaskHelper(std::function<TaskResult()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, QObject* parent = nullptr);
+    const TaskResult& result() const;
 
 #ifdef Q_OS_WIN
     static DWORD WINAPI functionWrapper(void* pTaskHelper);
@@ -147,14 +148,15 @@ public:
 #endif
 
 private:
-    std::function<QVariant()> m_function;
+    std::function<TaskResult()> m_function;
+    TaskResult m_result;
     std::atomic_bool* m_pStopFlag = nullptr;
     std::atomic_bool* m_pThreadExited = nullptr;
     void execute(); // Method declaration
     void markThreadExited() noexcept;
 
 signals:
-    void finished(QVariant result);
+    void finished();
 };
 
 /**
@@ -228,15 +230,17 @@ private:
         std::any m_function;
         TaskGroup m_group;
         TaskStopTimeout m_stopTimeout;
+        std::function<QVariant(const TaskResult&)> m_resultToVariant;
     };
 
     struct Task {
-        Task(std::function<QVariant()> functionBound, TaskType type, TaskGroup group, QList<QVariant> argsList = {}, TaskArgs stdArgs = {})
+        Task(std::function<TaskResult()> functionBound, TaskType type, TaskGroup group, QList<QVariant> argsList = {}, TaskArgs stdArgs = {}, std::function<QVariant(const TaskResult&)> resultToVariant = {})
             : m_functionBound(std::move(functionBound))
             , m_type(type)
             , m_group(group)
             , m_argsList(std::move(argsList))
             , m_stdArgs(std::move(stdArgs))
+            , m_resultToVariant(std::move(resultToVariant))
             , m_state(TaskState::Inactive) {
 
             static TaskId id_counter = 0;
@@ -244,11 +248,12 @@ private:
         }
 
         TaskId m_id;
-        std::function<QVariant()> m_functionBound;
+        std::function<TaskResult()> m_functionBound;
         TaskType m_type;
         TaskGroup m_group;
         QList<QVariant> m_argsList;
         TaskArgs m_stdArgs;
+        std::function<QVariant(const TaskResult&)> m_resultToVariant;
     #ifdef Q_OS_WIN
         HANDLE m_threadHandle = nullptr;
         DWORD m_threadId = 0;
@@ -277,7 +282,7 @@ private:
     static StopTimedOutEvent makeStopTimedOutEvent(const Task& task, TaskStopTimeout timeout);
 
     template <typename... Args>
-    void insertToTaskHash(TaskType taskType, std::function<QVariant(Args...)> taskFunction, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
+    void insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, std::function<QVariant(const TaskResult&)> resultToVariant, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
 
     std::unordered_map<TaskType, TaskInfo> m_taskHash;
     std::vector<std::shared_ptr<Task>> m_activeTaskList;
@@ -296,8 +301,12 @@ signals:
 // --- Class method implementations *after* class declarations ---
 
 // TaskHelper Implementation
-inline TaskHelper::TaskHelper(std::function<QVariant()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, QObject* parent)
+inline TaskHelper::TaskHelper(std::function<TaskResult()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, QObject* parent)
     : QObject(parent), m_function(function), m_pStopFlag(pStopFlag), m_pThreadExited(pThreadExited) {}
+
+inline const TaskResult& TaskHelper::result() const {
+    return m_result;
+}
 
 inline void TaskHelper::markThreadExited() noexcept {
     if (m_pThreadExited) {
@@ -307,9 +316,8 @@ inline void TaskHelper::markThreadExited() noexcept {
 
 inline void TaskHelper::execute() {
     core_detail::g_currentStopFlag = m_pStopFlag;
-    QVariant result;
     try {
-        result = m_function();
+        m_result = m_function();
     } catch (...) {
         core_detail::g_currentStopFlag = nullptr;
         markThreadExited();
@@ -317,7 +325,7 @@ inline void TaskHelper::execute() {
     }
     core_detail::g_currentStopFlag = nullptr;
     markThreadExited();
-    emit finished(result);
+    emit finished();
 }
 
 #ifdef Q_OS_WIN
@@ -457,27 +465,37 @@ void Core::registerTask(TaskType taskType, std::function<R(Args...)> taskFunctio
         throw std::logic_error("Core::registerTask must be called from the owner thread");
     }
 
-    std::function<QVariant(std::remove_reference_t<Args>...)> f;
+    std::function<TaskResult(std::remove_reference_t<Args>...)> f;
+    std::function<QVariant(const TaskResult&)> resultToVariant;
 
     if constexpr (std::is_void_v<R>) {
-        f = [taskFunction](std::remove_reference_t<Args>... args) -> QVariant {
+        f = [taskFunction](std::remove_reference_t<Args>... args) -> TaskResult {
             taskFunction(args...);
+            return TaskResult{};
+        };
+        resultToVariant = [](const TaskResult&) -> QVariant {
             return QVariant();
         };
     } else if constexpr (std::is_convertible_v<R, QVariant>) {
-        f = [taskFunction](std::remove_reference_t<Args>... args) -> QVariant {
-            return taskFunction(args...);
+        f = [taskFunction](std::remove_reference_t<Args>... args) -> TaskResult {
+            return TaskResult(taskFunction(args...));
+        };
+        resultToVariant = [](const TaskResult& result) -> QVariant {
+            return QVariant(std::any_cast<R>(result));
         };
     } else if constexpr (QMetaTypeId<R>::Defined) {
-        f = [taskFunction](std::remove_reference_t<Args>... args) -> QVariant {
-            return QVariant::fromValue(taskFunction(args...));
+        f = [taskFunction](std::remove_reference_t<Args>... args) -> TaskResult {
+            return TaskResult(taskFunction(args...));
+        };
+        resultToVariant = [](const TaskResult& result) -> QVariant {
+            return QVariant::fromValue(std::any_cast<R>(result));
         };
     } else {
         qWarning() << "Core::registerTask - Not convertible return type for task type:" << taskType;
         throw std::logic_error("Not convertible return type");
     }
 
-    insertToTaskHash(taskType, std::move(f), taskGroup, taskStopTimeout);
+    insertToTaskHash(taskType, std::move(f), std::move(resultToVariant), taskGroup, taskStopTimeout);
 }
 
 template <typename R, typename... Args>
@@ -554,7 +572,7 @@ void Core::addTask(TaskType taskType, Args... args) {
     try {
         const auto& taskInfo = taskInfoIt->second;
         auto storedFuncAny = taskInfo.m_function;
-        auto taskFunction = std::any_cast<std::function<QVariant(Args...)>>(storedFuncAny);
+        auto taskFunction = std::any_cast<std::function<TaskResult(Args...)>>(storedFuncAny);
         TaskArgs stdArgs = core_detail::makeTaskArgs(args...);
 
         QList<QVariant> argsList;
@@ -570,7 +588,8 @@ void Core::addTask(TaskType taskType, Args... args) {
             taskType,
             taskInfo.m_group,
             std::move(argsList),
-            std::move(stdArgs)
+            std::move(stdArgs),
+            taskInfo.m_resultToVariant
         );
 
         bool start = std::none_of(m_activeTaskList.begin(), m_activeTaskList.end(), [group = pTask->m_group](const auto& pActiveTask) {
@@ -1044,9 +1063,12 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
     pTask->m_threadExited.store(false);
     TaskHelper* pTaskHelper = new TaskHelper(pTask->m_functionBound, &pTask->m_stopFlag, &pTask->m_threadExited, this); // Add with parent!
 
-    connect(pTaskHelper, &TaskHelper::finished, this, [this, pTask, pTaskHelper](QVariant result) {
+    connect(pTaskHelper, &TaskHelper::finished, this, [this, pTask, pTaskHelper]() {
         pTask->m_state = TaskState::Finished;
-        emit finishedTask(pTask->m_id, pTask->m_type, pTask->m_argsList, result);
+        const TaskResult& result = pTaskHelper->result();
+        const auto finishedEvent = makeFinishedEvent(*pTask, result);
+        const QVariant qtResult = pTask->m_resultToVariant ? pTask->m_resultToVariant(finishedEvent.result) : QVariant();
+        emit finishedTask(pTask->m_id, pTask->m_type, pTask->m_argsList, qtResult);
         removeActiveTask(pTask);
         startQueuedTask();
         pTaskHelper->deleteLater();
@@ -1102,7 +1124,7 @@ inline void Core::startQueuedTask() {
 }
 
 template <typename... Args>
-void Core::insertToTaskHash(TaskType taskType, std::function<QVariant(Args...)> taskFunction, TaskGroup taskGroup, TaskStopTimeout taskStopTimeout) {
+void Core::insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, std::function<QVariant(const TaskResult&)> resultToVariant, TaskGroup taskGroup, TaskStopTimeout taskStopTimeout) {
     if (m_taskHash.find(taskType) != m_taskHash.cend()) {
         qWarning() << "Core::registerTask - Task type is already registered:" << taskType;
         throw std::logic_error("Task type is already registered");
@@ -1115,7 +1137,7 @@ void Core::insertToTaskHash(TaskType taskType, std::function<QVariant(Args...)> 
         normalizedStopTimeout = kDefaultStopTimeout;
     }
 
-    m_taskHash.emplace(taskType, TaskInfo{taskFunction, taskGroup, normalizedStopTimeout});
+    m_taskHash.emplace(taskType, TaskInfo{taskFunction, taskGroup, normalizedStopTimeout, std::move(resultToVariant)});
 }
 
 #endif // CORE_H
