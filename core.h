@@ -13,13 +13,14 @@
 #include <algorithm>
 #include <utility>
 #include <stdexcept>
+#include <vector>
+#include <memory>
+#include <unordered_map>
 
 // --- Import Qt headers ---
 #include <QObject>
 #include <QVariant>
 #include <QList>
-#include <QSharedPointer>
-#include <QHash>
 #include <QMetaType>
 #include <QDebug>
 #include <QTimer>
@@ -41,6 +42,8 @@ using TaskId = long;
 using TaskType = int;
 using TaskGroup = int;
 using TaskStopTimeout = int; // ms
+using TaskArgs = std::vector<std::any>;
+using TaskResult = std::any;
 
 namespace core_detail {
 inline thread_local std::atomic_bool* g_currentStopFlag = nullptr;
@@ -48,6 +51,48 @@ inline thread_local std::atomic_bool* g_currentStopFlag = nullptr;
 
 // --- Declaring constants ---
 inline constexpr TaskStopTimeout kDefaultStopTimeout = 1000;
+
+struct StartedEvent {
+    TaskId id;
+    TaskType type;
+    TaskArgs args;
+};
+
+struct FinishedEvent {
+    TaskId id;
+    TaskType type;
+    TaskArgs args;
+    TaskResult result;
+};
+
+struct TerminatedEvent {
+    TaskId id;
+    TaskType type;
+    TaskArgs args;
+};
+
+struct StopRequestedEvent {
+    TaskId id;
+    TaskType type;
+    TaskArgs args;
+};
+
+struct StopTimedOutEvent {
+    TaskId id;
+    TaskType type;
+    TaskArgs args;
+    TaskStopTimeout timeout = kDefaultStopTimeout;
+};
+
+namespace core_detail {
+template <typename... Args>
+TaskArgs makeTaskArgs(Args&&... args) {
+    TaskArgs taskArgs;
+    taskArgs.reserve(sizeof...(Args));
+    (taskArgs.emplace_back(std::forward<Args>(args)), ...);
+    return taskArgs;
+}
+}
 
 // --- Templates for checking convertibility ---
 template<typename T>
@@ -186,11 +231,12 @@ private:
     };
 
     struct Task {
-        Task(std::function<QVariant()> functionBound, TaskType type, TaskGroup group, QList<QVariant> argsList = {})
+        Task(std::function<QVariant()> functionBound, TaskType type, TaskGroup group, QList<QVariant> argsList = {}, TaskArgs stdArgs = {})
             : m_functionBound(std::move(functionBound))
             , m_type(type)
             , m_group(group)
             , m_argsList(std::move(argsList))
+            , m_stdArgs(std::move(stdArgs))
             , m_state(TaskState::Inactive) {
 
             static TaskId id_counter = 0;
@@ -202,6 +248,7 @@ private:
         TaskType m_type;
         TaskGroup m_group;
         QList<QVariant> m_argsList;
+        TaskArgs m_stdArgs;
     #ifdef Q_OS_WIN
         HANDLE m_threadHandle = nullptr;
         DWORD m_threadId = 0;
@@ -213,22 +260,28 @@ private:
         TaskState m_state;
     };
 
-    QSharedPointer<Task> activeTaskById(TaskId id);
-    QSharedPointer<Task> activeTaskByType(TaskType type);
-    QSharedPointer<Task> activeTaskByGroup(TaskGroup group);
+    std::shared_ptr<Task> activeTaskById(TaskId id);
+    std::shared_ptr<Task> activeTaskByType(TaskType type);
+    std::shared_ptr<Task> activeTaskByGroup(TaskGroup group);
 
-    void terminateTask(QSharedPointer<Task> pTask);
-    void stopTask(QSharedPointer<Task> pTask);
-    void startTask(QSharedPointer<Task> pTask);
+    void terminateTask(std::shared_ptr<Task> pTask);
+    void stopTask(std::shared_ptr<Task> pTask);
+    void startTask(std::shared_ptr<Task> pTask);
     void startQueuedTask();
+    void removeActiveTask(const std::shared_ptr<Task>& pTask);
     bool ensureCalledFromOwnerThread(const char* method) const;
+    static StartedEvent makeStartedEvent(const Task& task);
+    static FinishedEvent makeFinishedEvent(const Task& task, TaskResult result);
+    static TerminatedEvent makeTerminatedEvent(const Task& task);
+    static StopRequestedEvent makeStopRequestedEvent(const Task& task);
+    static StopTimedOutEvent makeStopTimedOutEvent(const Task& task, TaskStopTimeout timeout);
 
     template <typename... Args>
     void insertToTaskHash(TaskType taskType, std::function<QVariant(Args...)> taskFunction, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
 
-    QHash<TaskType, TaskInfo> m_taskHash;
-    QList<QSharedPointer<Task>> m_activeTaskList;
-    QList<QSharedPointer<Task>> m_queuedTaskList;
+    std::unordered_map<TaskType, TaskInfo> m_taskHash;
+    std::vector<std::shared_ptr<Task>> m_activeTaskList;
+    std::vector<std::shared_ptr<Task>> m_queuedTaskList;
     std::atomic_bool m_blockStartTask{false};
     bool m_allowForceTermination = false;
 
@@ -320,7 +373,7 @@ inline Core::~Core() {
     }
     m_queuedTaskList.clear();
 
-    if (m_activeTaskList.isEmpty()) {
+    if (m_activeTaskList.empty()) {
         return;
     }
 
@@ -338,12 +391,12 @@ inline Core::~Core() {
     waitTimer.start();
     constexpr TaskStopTimeout kDtorWaitMs = 2000;
 
-    while (!m_activeTaskList.isEmpty() && waitTimer.elapsed() < kDtorWaitMs) {
+    while (!m_activeTaskList.empty() && waitTimer.elapsed() < kDtorWaitMs) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         QThread::msleep(1);
     }
 
-    if (m_activeTaskList.isEmpty()) {
+    if (m_activeTaskList.empty()) {
         return;
     }
 
@@ -358,12 +411,12 @@ inline Core::~Core() {
         return;
     }
 
-    while (!m_activeTaskList.isEmpty() && waitTimer.elapsed() < (kDtorWaitMs * 2)) {
+    while (!m_activeTaskList.empty() && waitTimer.elapsed() < (kDtorWaitMs * 2)) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         QThread::msleep(1);
     }
 
-    if (!m_activeTaskList.isEmpty()) {
+    if (!m_activeTaskList.empty()) {
         qWarning() << "Core::~Core - active tasks still present after shutdown timeout:" << m_activeTaskList.size();
     }
 }
@@ -376,6 +429,26 @@ inline bool Core::ensureCalledFromOwnerThread(const char* method) const {
                << "- called from non-owner thread. owner =" << thread()
                << ", current =" << QThread::currentThread();
     return false;
+}
+
+inline StartedEvent Core::makeStartedEvent(const Task& task) {
+    return StartedEvent{task.m_id, task.m_type, task.m_stdArgs};
+}
+
+inline FinishedEvent Core::makeFinishedEvent(const Task& task, TaskResult result) {
+    return FinishedEvent{task.m_id, task.m_type, task.m_stdArgs, std::move(result)};
+}
+
+inline TerminatedEvent Core::makeTerminatedEvent(const Task& task) {
+    return TerminatedEvent{task.m_id, task.m_type, task.m_stdArgs};
+}
+
+inline StopRequestedEvent Core::makeStopRequestedEvent(const Task& task) {
+    return StopRequestedEvent{task.m_id, task.m_type, task.m_stdArgs};
+}
+
+inline StopTimedOutEvent Core::makeStopTimedOutEvent(const Task& task, TaskStopTimeout timeout) {
+    return StopTimedOutEvent{task.m_id, task.m_type, task.m_stdArgs, timeout};
 }
 
 template <typename R, typename... Args>
@@ -463,7 +536,7 @@ inline bool Core::unregisterTask(TaskType taskType) {
             return false;
         }
     }
-    return m_taskHash.remove(taskType) > 0;
+    return m_taskHash.erase(taskType) > 0;
 }
 
 template <typename... Args>
@@ -472,16 +545,17 @@ void Core::addTask(TaskType taskType, Args... args) {
         throw std::logic_error("Core::addTask must be called from the owner thread");
     }
 
-    auto taskInfoIt = m_taskHash.constFind(taskType);
+    auto taskInfoIt = m_taskHash.find(taskType);
     if (taskInfoIt == m_taskHash.cend()) {
         qWarning() << "Core::addTask - Task not registered for type:" << taskType;
         throw std::logic_error("Task not registered");
     }
 
     try {
-        const auto& taskInfo = taskInfoIt.value();
+        const auto& taskInfo = taskInfoIt->second;
         auto storedFuncAny = taskInfo.m_function;
         auto taskFunction = std::any_cast<std::function<QVariant(Args...)>>(storedFuncAny);
+        TaskArgs stdArgs = core_detail::makeTaskArgs(args...);
 
         QList<QVariant> argsList;
         if constexpr (all_convertible_to<QVariant>::check<Args...>()) {
@@ -491,12 +565,13 @@ void Core::addTask(TaskType taskType, Args... args) {
         }
 
         auto taskFunctionBound = std::bind(taskFunction, args...);
-        auto pTask = QSharedPointer<Task>(new Task(
+        auto pTask = std::make_shared<Task>(
             std::move(taskFunctionBound),
             taskType,
             taskInfo.m_group,
-            std::move(argsList)
-        ));
+            std::move(argsList),
+            std::move(stdArgs)
+        );
 
         bool start = std::none_of(m_activeTaskList.begin(), m_activeTaskList.end(), [group = pTask->m_group](const auto& pActiveTask) {
             return pActiveTask->m_group == group;
@@ -505,7 +580,7 @@ void Core::addTask(TaskType taskType, Args... args) {
         if (start && !m_blockStartTask.load()) {
             startTask(pTask);
         } else {
-            m_queuedTaskList.append(std::move(pTask));
+            m_queuedTaskList.push_back(std::move(pTask));
         }
     } catch (const std::bad_any_cast& e) {
         qWarning() << "Core::addTask - Bad arguments or function signature mismatch for task type:" << taskType << e.what();
@@ -522,7 +597,7 @@ inline void Core::terminateTaskById(TaskId id) {
         return;
     }
 
-    if (auto pTask = activeTaskById(id); !pTask.isNull()) {
+    if (auto pTask = activeTaskById(id)) {
         if (!m_allowForceTermination) {
             qWarning() << "Core::terminateTaskById - force termination is disabled. Requesting cooperative stop for task ID:" << id;
             stopTaskById(id);
@@ -593,7 +668,7 @@ inline void Core::stopTaskById(TaskId id) {
         return;
     }
 
-    if (auto pTask = activeTaskById(id); !pTask.isNull()) {
+    if (auto pTask = activeTaskById(id)) {
         stopTask(std::move(pTask));
     }
 }
@@ -603,7 +678,7 @@ inline void Core::stopTaskByType(TaskType type) {
         return;
     }
 
-    if (auto pTask = activeTaskByType(type); !pTask.isNull()) {
+    if (auto pTask = activeTaskByType(type)) {
         stopTask(std::move(pTask));
     }
 }
@@ -621,7 +696,7 @@ inline void Core::stopTasks() {
         return;
     }
 
-    if (m_activeTaskList.isEmpty()) {
+    if (m_activeTaskList.empty()) {
         return;
     }
 
@@ -639,9 +714,9 @@ inline void Core::stopTasks() {
     // Calculating the maximum stop timeout among active tasks
     TaskStopTimeout maxTimeout = 0;
     for (const auto& pTask : std::as_const(m_activeTaskList)) {
-        auto taskInfoIt = m_taskHash.constFind(pTask->m_type);
+        auto taskInfoIt = m_taskHash.find(pTask->m_type);
         if (taskInfoIt != m_taskHash.cend()) {
-            maxTimeout = std::max(maxTimeout, taskInfoIt.value().m_stopTimeout);
+            maxTimeout = std::max(maxTimeout, taskInfoIt->second.m_stopTimeout);
         } else {
             maxTimeout = std::max(maxTimeout, static_cast<TaskStopTimeout>(kDefaultStopTimeout));
             qWarning() << "Core::stopTasks - Missing registration for active task type:" << pTask->m_type;
@@ -677,10 +752,10 @@ inline void Core::stopTasksByGroup(TaskGroup group, bool includeQueued) {
         return;
     }
 
-    QList<QSharedPointer<Task>> activeInGroup;
+    std::vector<std::shared_ptr<Task>> activeInGroup;
     for (const auto& pTask : std::as_const(m_activeTaskList)) {
         if (pTask->m_group == group) {
-            activeInGroup.append(pTask);
+            activeInGroup.push_back(pTask);
         }
     }
 
@@ -708,7 +783,7 @@ inline void Core::stopTasksByGroup(TaskGroup group, bool includeQueued) {
         return false;
     }
 
-    return m_taskHash.contains(type);
+    return m_taskHash.find(type) != m_taskHash.cend();
 }
 
 inline TaskGroup Core::groupByTask(TaskType type, bool* ok) {
@@ -717,10 +792,10 @@ inline TaskGroup Core::groupByTask(TaskType type, bool* ok) {
         return -1;
     }
 
-    auto taskInfoIt = m_taskHash.constFind(type);
+    auto taskInfoIt = m_taskHash.find(type);
     if (taskInfoIt != m_taskHash.cend()) {
         if (ok) *ok = true;
-        return taskInfoIt.value().m_group;
+        return taskInfoIt->second.m_group;
     } else {
         if (ok) *ok = false;
         return -1;
@@ -732,7 +807,7 @@ inline TaskGroup Core::groupByTask(TaskType type, bool* ok) {
         return false;
     }
 
-    return m_activeTaskList.isEmpty();
+    return m_activeTaskList.empty();
 }
 
 [[nodiscard]] inline bool Core::isTaskAddedByType(TaskType type, bool* isActive) {
@@ -779,25 +854,29 @@ inline TaskGroup Core::groupByTask(TaskType type, bool* ok) {
 
 // --- Internal method implementations (inline) ---
 
-inline QSharedPointer<Core::Task> Core::activeTaskById(TaskId id) {
+inline std::shared_ptr<Core::Task> Core::activeTaskById(TaskId id) {
     auto it = std::find_if(m_activeTaskList.begin(), m_activeTaskList.end(),
                            [id](const auto& pTask) { return pTask->m_id == id; });
-    return (it != m_activeTaskList.end()) ? *it : QSharedPointer<Task>{};
+    return (it != m_activeTaskList.end()) ? *it : std::shared_ptr<Task>{};
 }
 
-inline QSharedPointer<Core::Task> Core::activeTaskByType(TaskType type) {
+inline std::shared_ptr<Core::Task> Core::activeTaskByType(TaskType type) {
     auto it = std::find_if(m_activeTaskList.begin(), m_activeTaskList.end(),
                            [type](const auto& pTask) { return pTask->m_type == type; });
-    return (it != m_activeTaskList.end()) ? *it : QSharedPointer<Task>{};
+    return (it != m_activeTaskList.end()) ? *it : std::shared_ptr<Task>{};
 }
 
-inline QSharedPointer<Core::Task> Core::activeTaskByGroup(TaskGroup group) {
+inline std::shared_ptr<Core::Task> Core::activeTaskByGroup(TaskGroup group) {
     auto it = std::find_if(m_activeTaskList.begin(), m_activeTaskList.end(),
                            [group](const auto& pTask) { return pTask->m_group == group; });
-    return (it != m_activeTaskList.end()) ? *it : QSharedPointer<Task>{};
+    return (it != m_activeTaskList.end()) ? *it : std::shared_ptr<Task>{};
 }
 
-inline void Core::terminateTask(QSharedPointer<Core::Task> pTask) {
+inline void Core::removeActiveTask(const std::shared_ptr<Task>& pTask) {
+    m_activeTaskList.erase(std::remove(m_activeTaskList.begin(), m_activeTaskList.end(), pTask), m_activeTaskList.end());
+}
+
+inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
     // Set stop flag to request cooperative cancellation
     pTask->m_stopFlag.store(true);
 
@@ -808,9 +887,9 @@ inline void Core::terminateTask(QSharedPointer<Core::Task> pTask) {
 
     // Determine timeout from task's registered stop timeout (verification window).
     TaskStopTimeout timeout = kDefaultStopTimeout;
-    auto taskInfoIt = m_taskHash.constFind(pTask->m_type);
+    auto taskInfoIt = m_taskHash.find(pTask->m_type);
     if (taskInfoIt != m_taskHash.cend()) {
-        timeout = taskInfoIt.value().m_stopTimeout;
+        timeout = taskInfoIt->second.m_stopTimeout;
     }
 
     // IMPORTANT: do not block the UI thread here.
@@ -827,7 +906,7 @@ inline void Core::terminateTask(QSharedPointer<Core::Task> pTask) {
             CloseHandle(pTask->m_threadHandle);
             pTask->m_threadHandle = nullptr;
             emit terminatedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
-            m_activeTaskList.removeAll(pTask);
+            removeActiveTask(pTask);
             startQueuedTask();
             return;
         }
@@ -842,7 +921,7 @@ inline void Core::terminateTask(QSharedPointer<Core::Task> pTask) {
             // Thread already not alive, but finishedTask might never be emitted (e.g. pthread_exit/cancel path).
             pTask->m_state = TaskState::Terminated;
             emit terminatedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
-            m_activeTaskList.removeAll(pTask);
+            removeActiveTask(pTask);
             startQueuedTask();
             return;
         }
@@ -858,9 +937,9 @@ inline void Core::terminateTask(QSharedPointer<Core::Task> pTask) {
         return;
     }
 
-    auto started = QSharedPointer<QElapsedTimer>::create();
+    auto started = std::make_shared<QElapsedTimer>();
     started->start();
-    auto checker = QSharedPointer<std::function<void()>>::create();
+    auto checker = std::make_shared<std::function<void()>>();
 
     *checker = [this, pTask, timeout, started, checker]() {
         if (pTask->m_state == TaskState::Inactive
@@ -888,7 +967,7 @@ inline void Core::terminateTask(QSharedPointer<Core::Task> pTask) {
         if (!isAlive) {
             pTask->m_state = TaskState::Terminated;
             emit terminatedTask(pTask->m_id, pTask->m_type, pTask->m_argsList);
-            m_activeTaskList.removeAll(pTask);
+            removeActiveTask(pTask);
             startQueuedTask();
             return;
         }
@@ -911,7 +990,7 @@ inline void Core::terminateTask(QSharedPointer<Core::Task> pTask) {
     });
 }
 
-inline void Core::stopTask(QSharedPointer<Core::Task> pTask) {
+inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
     pTask->m_stopFlag.store(true);
     if (pTask->m_state == TaskState::Active) {
         pTask->m_state = TaskState::StopRequested;
@@ -919,9 +998,9 @@ inline void Core::stopTask(QSharedPointer<Core::Task> pTask) {
     }
 
     TaskStopTimeout timeout = kDefaultStopTimeout;
-    auto taskInfoIt = m_taskHash.constFind(pTask->m_type);
+    auto taskInfoIt = m_taskHash.find(pTask->m_type);
     if (taskInfoIt != m_taskHash.cend()) {
-        timeout = taskInfoIt.value().m_stopTimeout;
+        timeout = taskInfoIt->second.m_stopTimeout;
     } else {
         qWarning() << "Core::stopTask - Missing registration for active task type:" << pTask->m_type;
     }
@@ -959,8 +1038,8 @@ inline void Core::stopTask(QSharedPointer<Core::Task> pTask) {
     });
 }
 
-inline void Core::startTask(QSharedPointer<Core::Task> pTask) {
-    m_activeTaskList.append(pTask);
+inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
+    m_activeTaskList.push_back(pTask);
     pTask->m_state = TaskState::Active;
     pTask->m_threadExited.store(false);
     TaskHelper* pTaskHelper = new TaskHelper(pTask->m_functionBound, &pTask->m_stopFlag, &pTask->m_threadExited, this); // Add with parent!
@@ -968,7 +1047,7 @@ inline void Core::startTask(QSharedPointer<Core::Task> pTask) {
     connect(pTaskHelper, &TaskHelper::finished, this, [this, pTask, pTaskHelper](QVariant result) {
         pTask->m_state = TaskState::Finished;
         emit finishedTask(pTask->m_id, pTask->m_type, pTask->m_argsList, result);
-        m_activeTaskList.removeAll(pTask);
+        removeActiveTask(pTask);
         startQueuedTask();
         pTaskHelper->deleteLater();
     });
@@ -977,7 +1056,7 @@ inline void Core::startTask(QSharedPointer<Core::Task> pTask) {
     pTask->m_threadHandle = CreateThread(nullptr, 0, &TaskHelper::functionWrapper, pTaskHelper, 0, &pTask->m_threadId);
     if (pTask->m_threadHandle == NULL) {
         qWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". GetLastError:" << GetLastError();
-        m_activeTaskList.removeAll(pTask);
+        removeActiveTask(pTask);
         // emit taskCreationFailed(...);
         startQueuedTask();
         pTaskHelper->deleteLater();
@@ -989,7 +1068,7 @@ inline void Core::startTask(QSharedPointer<Core::Task> pTask) {
     int result = pthread_create(&pTask->m_threadHandle, nullptr, &TaskHelper::functionWrapper, pTaskHelper);
     if (result != 0) {
         qWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". Error code:" << result;
-        m_activeTaskList.removeAll(pTask);
+        removeActiveTask(pTask);
         // emit taskCreationFailed(...);
         startQueuedTask();
         pTaskHelper->deleteLater();
@@ -1008,9 +1087,9 @@ inline void Core::startQueuedTask() {
     }
 
     for (auto it = m_queuedTaskList.begin(); it != m_queuedTaskList.end();) {
-        QSharedPointer<Task> pQueuedTask = *it;
+        std::shared_ptr<Task> pQueuedTask = *it;
         bool canStart = std::none_of(std::as_const(m_activeTaskList).begin(), std::as_const(m_activeTaskList).end(),
-                                     [&pQueuedTask](const QSharedPointer<Task>& pActiveTask) {
+                                     [&pQueuedTask](const std::shared_ptr<Task>& pActiveTask) {
             return pActiveTask->m_group == pQueuedTask->m_group;
         });
         if (canStart) {
@@ -1024,7 +1103,7 @@ inline void Core::startQueuedTask() {
 
 template <typename... Args>
 void Core::insertToTaskHash(TaskType taskType, std::function<QVariant(Args...)> taskFunction, TaskGroup taskGroup, TaskStopTimeout taskStopTimeout) {
-    if (m_taskHash.contains(taskType)) {
+    if (m_taskHash.find(taskType) != m_taskHash.cend()) {
         qWarning() << "Core::registerTask - Task type is already registered:" << taskType;
         throw std::logic_error("Task type is already registered");
     }
@@ -1036,7 +1115,7 @@ void Core::insertToTaskHash(TaskType taskType, std::function<QVariant(Args...)> 
         normalizedStopTimeout = kDefaultStopTimeout;
     }
 
-    m_taskHash.insert(taskType, TaskInfo{taskFunction, taskGroup, normalizedStopTimeout});
+    m_taskHash.emplace(taskType, TaskInfo{taskFunction, taskGroup, normalizedStopTimeout});
 }
 
 #endif // CORE_H
