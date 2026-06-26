@@ -509,6 +509,7 @@ inline Core::~Core() {
     };
 
     while (!m_activeTaskList.empty() && elapsedWaitMs() < kDtorWaitMs) {
+        processEvents();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -529,6 +530,7 @@ inline Core::~Core() {
     }
 
     while (!m_activeTaskList.empty() && elapsedWaitMs() < (kDtorWaitMs * 2)) {
+        processEvents();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -1233,11 +1235,14 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
         &pTask->m_stopFlag,
         &pTask->m_threadExited,
         [this, pTask](TaskResult result) {
-            QMetaObject::invokeMethod(this, [this, pTask, result = std::move(result)]() mutable {
+            postToOwner([this, pTask, result = std::move(result)]() mutable {
                 pTask->m_state = TaskState::Finished;
                 publishFinished(*pTask, std::move(result));
                 removeActiveTask(pTask);
                 startQueuedTask();
+            });
+            QMetaObject::invokeMethod(this, [this]() {
+                processEvents();
             }, Qt::QueuedConnection);
         }
     );
