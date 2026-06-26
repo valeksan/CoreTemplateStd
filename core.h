@@ -273,6 +273,11 @@ private:
         Terminated
     };
 
+    struct ScheduledOwnerEvent {
+        std::chrono::steady_clock::time_point dueAt;
+        std::function<void()> event;
+    };
+
     struct TaskInfo {
         std::any m_function;
         TaskGroup m_group;
@@ -347,6 +352,7 @@ private:
     std::thread::id m_ownerThreadId;
     std::mutex m_eventMutex;
     std::deque<std::function<void()>> m_eventQueue;
+    std::vector<ScheduledOwnerEvent> m_scheduledEvents;
     StartedCallback m_startedCallback;
     FinishedCallback m_finishedCallback;
     TerminatedCallback m_terminatedCallback;
@@ -458,11 +464,21 @@ inline void Core::processEvents() {
         std::function<void()> event;
         {
             std::lock_guard<std::mutex> lock(m_eventMutex);
-            if (m_eventQueue.empty()) {
-                return;
+            if (!m_eventQueue.empty()) {
+                event = std::move(m_eventQueue.front());
+                m_eventQueue.pop_front();
+            } else {
+                const auto now = std::chrono::steady_clock::now();
+                auto it = std::find_if(m_scheduledEvents.begin(), m_scheduledEvents.end(),
+                                       [&now](const ScheduledOwnerEvent& scheduledEvent) {
+                                           return scheduledEvent.dueAt <= now;
+                                       });
+                if (it == m_scheduledEvents.end()) {
+                    return;
+                }
+                event = std::move(it->event);
+                m_scheduledEvents.erase(it);
             }
-            event = std::move(m_eventQueue.front());
-            m_eventQueue.pop_front();
         }
 
         if (event) {
@@ -564,8 +580,16 @@ inline void Core::wakeOwnerEventLoop() {
 }
 
 inline void Core::scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event) {
-    QTimer::singleShot(delayMs, this, [this, event = std::move(event)]() mutable {
-        postToOwner(std::move(event));
+    const auto normalizedDelayMs = std::max(delayMs, static_cast<TaskStopTimeout>(0));
+    {
+        std::lock_guard<std::mutex> lock(m_eventMutex);
+        m_scheduledEvents.push_back(ScheduledOwnerEvent{
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(normalizedDelayMs),
+            std::move(event)
+        });
+    }
+
+    QTimer::singleShot(normalizedDelayMs, this, [this]() {
         processEvents();
     });
 }
