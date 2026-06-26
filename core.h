@@ -28,8 +28,6 @@
 #include <QList>
 #include <QMetaType>
 #include <QTimer>
-#include <QCoreApplication>
-#include <QEventLoop>
 #include <QMetaObject>
 
 // --- Threading/Multiprocessing API Headers ---
@@ -528,7 +526,6 @@ inline Core::~Core() {
 
     while (!m_activeTaskList.empty() && elapsedWaitMs() < kDtorWaitMs) {
         processEvents();
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
@@ -549,7 +546,6 @@ inline Core::~Core() {
 
     while (!m_activeTaskList.empty() && elapsedWaitMs() < (kDtorWaitMs * 2)) {
         processEvents();
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
