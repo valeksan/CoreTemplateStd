@@ -52,6 +52,7 @@ compile_commands.json
 *creator.user*
 
 build/
+local_docs/
 CMakeCache.txt
 CMakeFiles/
 .vscode/c_cpp_properties.json
