@@ -22,9 +22,6 @@
 #include <mutex>
 #include <deque>
 
-// --- Import Qt headers ---
-#include <QObject>
-
 // --- Threading/Multiprocessing API Headers ---
 #ifdef Q_OS_WIN
     #include <windows.h>
@@ -176,9 +173,7 @@ private:
  * must be called from the same thread where the Core object lives (typically the main GUI thread).
  * Calling these methods from task threads concurrently may lead to undefined behavior.
  */
-class Core : public QObject {
-    Q_OBJECT
-
+class Core {
 public:
     using StartedCallback = std::function<void(const StartedEvent&)>;
     using FinishedCallback = std::function<void(const FinishedEvent&)>;
@@ -186,8 +181,8 @@ public:
     using StopRequestedCallback = std::function<void(const StopRequestedEvent&)>;
     using StopTimedOutCallback = std::function<void(const StopTimedOutEvent&)>;
 
-    explicit Core(QObject* parent = nullptr);
-    ~Core() override;
+    Core();
+    ~Core();
 
     void onStarted(StartedCallback callback);
     void onFinished(FinishedCallback callback);
@@ -395,8 +390,8 @@ inline void* TaskHelper::functionWrapper(void* pTaskHelper) {
 #endif
 
 // Core Implementation
-inline Core::Core(QObject* parent)
-    : QObject(parent), m_ownerThreadId(std::this_thread::get_id()) {}
+inline Core::Core()
+    : m_ownerThreadId(std::this_thread::get_id()) {}
 
 inline void Core::onStarted(StartedCallback callback) {
     m_startedCallback = std::move(callback);
@@ -451,7 +446,7 @@ inline void Core::processEvents() {
 }
 
 inline Core::~Core() {
-    // Best-effort synchronous shutdown to avoid destroying QObject children while worker threads are still running.
+    // Best-effort synchronous shutdown to avoid destroying Core while worker threads are still running.
     if (std::this_thread::get_id() != m_ownerThreadId) {
         core_detail::logWarning() << "Core::~Core - called from non-owner thread. Forcing stop flags only.";
         for (const auto& pTask : std::as_const(m_activeTaskList)) {
