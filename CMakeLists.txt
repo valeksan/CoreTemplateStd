@@ -12,6 +12,7 @@ add_library(CoreTemplate::CoreTemplate ALIAS CoreTemplateStd)
 target_compile_features(CoreTemplateStd INTERFACE cxx_std_17)
 target_include_directories(CoreTemplateStd INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplateStd>
 )
 target_sources(CoreTemplateStd INTERFACE

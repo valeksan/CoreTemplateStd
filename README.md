@@ -59,6 +59,12 @@ find_package(CoreTemplateStd REQUIRED)
 target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
 ```
 
+Installed package consumers can include the header explicitly:
+
+```cpp
+#include <CoreTemplateStd/core.h>
+```
+
 The old CMake package name remains available as a compatibility layer:
 
 ```cmake
@@ -80,7 +86,7 @@ CoreTemplateStd is a breaking std-only branch of the original Qt-oriented API:
 ## Quick Start
 
 ```cpp
-#include "core.h"
+#include <CoreTemplateStd/core.h>
 
 #include <any>
 #include <chrono>
@@ -162,7 +168,7 @@ The current `std::thread` backend has no safe standard way to kill a running thr
 ## Grouping Example
 
 ```cpp
-#include "core.h"
+#include <CoreTemplateStd/core.h>
 
 #include <any>
 #include <chrono>

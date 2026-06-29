@@ -59,6 +59,12 @@ find_package(CoreTemplateStd REQUIRED)
 target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
 ```
 
+Потребители установленного пакета могут подключать заголовок явно:
+
+```cpp
+#include <CoreTemplateStd/core.h>
+```
+
 Старое имя CMake package остаётся доступным как слой совместимости:
 
 ```cmake
@@ -80,7 +86,7 @@ CoreTemplateStd - это breaking std-only ветка исходного Qt-ор
 ## Быстрый старт
 
 ```cpp
-#include "core.h"
+#include <CoreTemplateStd/core.h>
 
 #include <any>
 #include <chrono>
@@ -162,7 +168,7 @@ core.setAllowForceTermination(true);
 ## Пример группировки
 
 ```cpp
-#include "core.h"
+#include <CoreTemplateStd/core.h>
 
 #include <any>
 #include <chrono>

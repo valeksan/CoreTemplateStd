@@ -16,6 +16,16 @@ target_link_libraries(CoreTemplateStdPackageSmoke PRIVATE
 
 target_compile_features(CoreTemplateStdPackageSmoke PRIVATE cxx_std_17)
 
+add_executable(CoreTemplateStdPrefixedIncludeSmoke
+    prefixed_include_main.cpp
+)
+
+target_link_libraries(CoreTemplateStdPrefixedIncludeSmoke PRIVATE
+    CoreTemplateStd::CoreTemplateStd
+)
+
+target_compile_features(CoreTemplateStdPrefixedIncludeSmoke PRIVATE cxx_std_17)
+
 add_executable(CoreTemplateCompatPackageSmoke
     main.cpp
 )
@@ -27,4 +37,5 @@ target_link_libraries(CoreTemplateCompatPackageSmoke PRIVATE
 target_compile_features(CoreTemplateCompatPackageSmoke PRIVATE cxx_std_17)
 
 add_test(NAME CoreTemplateStdPackageSmoke COMMAND CoreTemplateStdPackageSmoke)
+add_test(NAME CoreTemplateStdPrefixedIncludeSmoke COMMAND CoreTemplateStdPrefixedIncludeSmoke)
 add_test(NAME CoreTemplateCompatPackageSmoke COMMAND CoreTemplateCompatPackageSmoke)
