@@ -2,23 +2,14 @@
 
 ## Structure
 
-- `core_tests.cpp` - QtTest test suite for the `Core` API.
-- `CMakeLists.txt` - CMake build file (Qt5/Qt6).
-- `core_tests.pro` - qmake project file.
+- `core_tests.cpp` - std-only test executable for the `Core` API.
+- `CMakeLists.txt` - CMake build file.
+- `package_smoke/` - installed-package smoke test using `find_package(CoreTemplate)`.
 
 ## Run with CMake
 
-```powershell
-cmake -S tests -B tests/build
-cmake --build tests/build --config Debug
-ctest --test-dir tests/build --output-on-failure -C Debug
-```
-
-## Run with qmake
-
-```powershell
-cd tests
-qmake core_tests.pro
-mingw32-make
-./CoreTemplateTests.exe
+```bash
+cmake -S .. -B ../build/std_only_tests -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=OFF
+cmake --build ../build/std_only_tests --target CoreTemplateTests
+ctest --test-dir ../build/std_only_tests/tests --output-on-failure
 ```
