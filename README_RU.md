@@ -1,278 +1,188 @@
-# 🧵 CoreTemplate
+# CoreTemplate
 
-Современная header-only библиотека на C++/Qt для **безопасного и эффективного выполнения задач в отдельных потоках**, со встроенной поддержкой группировки, кооперативной остановки и типобезопасной регистрации.
+Современная header-only библиотека на C++17 для запуска зарегистрированных задач в отдельных потоках, с группировкой, кооперативной отменой, таймаутами остановки и небольшим callback/event API.
 
 [![Build Status](https://github.com/valeksan/CoreTemplate/actions/workflows/ci.yml/badge.svg)](https://github.com/valeksan/CoreTemplate/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/language-C++17-blue.svg)](https://en.cppreference.com/w/cpp/17)
-[![Qt](https://img.shields.io/badge/Qt-5.12+-green.svg)](https://www.qt.io/)
 
 *[English version](README.md)*
-## Содержание
 
-- [Возможности](#-возможности)
-- [Начало работы](#-начало-работы)
-- [Пример](#-пример)
-- [Архитектура и правила использования](#архитектура-и-правила-использования)
-- [Публичные методы](#публичные-методы)
-- [Миграция и безопасные значения по умолчанию](#миграция-и-безопасные-значения-по-умолчанию)
-- [Модель потоков](#модель-потоков)
-- [Соображения безопасности](#соображения-безопасности)
-- [Как это работает](#как-это-работает)
-- [Важные замечания](#важные-замечания)
-- [Предварительные условия](#предварительные-условия)
-- [Базовый пример](#базовый-пример)
-- [Пример группировки](#пример-группировки)
-- [Поддержка проекта](#поддержка-проекта)
+## Возможности
 
+- **Header-only core**: можно скопировать `core.h` или подключить CMake interface target.
+- **Без обязательной Qt-зависимости в core**: публичный API использует типы стандартной библиотеки.
+- **Типобезопасная регистрация**: поддерживаются free functions, lambda, functor, non-const member functions и const member functions.
+- **Группировка задач**: одновременно выполняется только одна задача в группе, а задачи из разных групп могут выполняться параллельно.
+- **Кооперативная отмена**: задачи могут проверять `stopTaskFlag()` и завершаться аккуратно.
+- **Callback events**: можно подписаться на started, finished, terminated, stop-requested и stop-timeout события.
+- **C++17 payloads**: аргументы и результаты задач доступны как `std::vector<std::any>` и `std::any`.
 
-## ✨ Возможности
+## Начало работы
 
-- ✅ **Header-only, нулевые накладные расходы**: Без дополнительных зависимостей, просто скопируйте `core.h` в ваш проект.
-- ✅ **Типобезопасная регистрация**: Проверка сигнатур функций на этапе компиляции с использованием `std::function`, `if constexpr` и `std::any`.
-- ✅ **Группировка задач**: Одновременно выполняется только одна задача в группе (например, «сеть», «файловый ввод-вывод») для сериализации доступа к общим ресурсам.
-- ✅ **Кооперативная остановка**: Задачи могут проверять флаг `stopTaskFlag()` и корректно завершаться, с настраиваемыми таймаутами.
-- ✅ **Современный C++17**: Использует `std::atomic`, `std::bind`, `enum class`, `QMetaType` и `QSharedPointer`.
-- ✅ **Выполнение в выделенных потоках**: Каждая зарегистрированная функция выполняется в своём управляемом потоке, не блокируя главный поток.
-- ✅ **Полное управление задачами**: Регистрация, удаление, добавление, остановка, принудительное завершение и запрос задач по типу, группе или ID.
-- ✅ **Запрос статуса**: Проверка, зарегистрирована ли задача, простаивает, добавлена или активна.
+CoreTemplate требует компилятор с поддержкой C++17. Для сборки и использования core target пакет Qt не нужен.
 
-## 🚀 Начало работы
+Можно скопировать `core.h` в проект или подключить репозиторий через CMake:
 
-Убедитесь, что у вас установлены **Qt 5.12 или новее** и **компилятор с поддержкой C++17** (подробности см. в разделе [Предварительные условия](#предварительные-условия)).
-
-### Установка
-
-Просто скопируйте файл `core.h` в ваш проект. Библиотека является header‑only!
-
-### Быстрый старт
-
-```cpp
-// 1. Инициализация менеджера задач
-auto m_pCore = new Core();
-
-// 2. Регистрация задачи
-m_pCore->registerTask(1, [](int a, int b) -> int {
-    QThread::msleep(100); // Имитация работы
-    return a + b;
-});
-
-// 3. Добавление задачи в очередь
-m_pCore->addTask(1, 10, 20);
-
-// 4. Обработка результата
-connect(m_pCore, &Core::finishedTask, this, [](TaskId id, TaskType type, const QVariantList& argsList, const QVariant& result) {
-    Q_UNUSED(id);
-    Q_UNUSED(type);
-    Q_UNUSED(argsList);
-    qDebug() << "Result:" << result.toInt();
-});
+```cmake
+add_subdirectory(CoreTemplate)
+target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
 ```
 
-> **Примечание:** В примере выше используется выделение памяти в куче (`new Core()`). Вы также можете создать объект `Core` на стеке (например, `Core core;`), как показано в Базовом примере ниже.
+Установка и подключение через `find_package`:
 
-## 🧪 Пример
-
-См. директорию **example/** для полного Qt Widgets приложения, демонстрирующего все возможности.
-
-*Для Qt6 предпочтительно использовать **CMakeLists.txt** при открытии проекта, а для Qt5 — **example_app.pro**.*
-
-![скриншот примера приложения](example/example_app_screenshot.jpg)
-
-## Архитектура и правила использования
-
-**ВАЖНО:** Класс `Core` **не является потокобезопасным** для своих публичных методов. Для обеспечения стабильности:
-
-- **Все вызовы публичных методов** (например, `registerTask`, `addTask`, `cancelTaskById`, `terminateTaskById`, `isTask...` и т.д.) **должны происходить из того же потока**, в котором живёт объект `Core`. Обычно это **главный GUI‑поток**.
-- Функции, зарегистрированные через `registerTask`, выполняются в собственных выделенных потоках, управляемых библиотекой.
-- Код, выполняющийся внутри зарегистрированной задачи, **должен избегать прямых вызовов публичных методов `Core`**, так как это может привести к состоянию гонки и неопределённому поведению. Если задаче необходимо взаимодействовать с `Core`, следует использовать `QMetaObject::invokeMethod` для отправки сообщения в главный поток, который затем безопасно выполнит действие.
-
-## Публичные методы
-
-Полный список определён в заголовочном файле `core.h`. Для подробной документации обратитесь к исходному коду.
-
-- `registerTask`: Регистрирует функцию/лямбду/функтор для последующего выполнения по типу.
-- `addTask`: Добавляет зарегистрированную задачу в очередь выполнения.
-- `unregisterTask`: Удаляет тип задачи из регистрации.
-- `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup`: Запрашивают кооперативную (плавную) отмену задач.
-- `stopTaskById`, `stopTaskByType`, `stopTaskByGroup`, `stopTasks`, `stopAllTasks`, `stopTasksByGroup`: Сохранены для обратной совместимости и эквивалентны `cancel...`.
-- `terminateTaskById`: Запрашивает остановку и использует принудительное завершение только при явном включении через `setAllowForceTermination(true)`.
-- `setAllowForceTermination(bool)`: Включает/выключает путь принудительного завершения (`false` по умолчанию).
-- `isTaskRegistered`, `isIdle`, `isTaskAddedByType`, `isTaskAddedByGroup`: Запрос статуса задачи.
-- `groupByTask`: Получает группу, связанную с типом задачи.
-- `stopTaskFlag`: Возвращает thread-local указатель на флаг остановки для текущего выполняющегося потока задачи; используйте его внутри кода задачи для кооперативной остановки.
-
-## Миграция и безопасные значения по умолчанию
-
-- Принудительное завершение по умолчанию отключено (`allowForceTermination() == false`).
-- Вызов `terminateTaskById` при отключённом force-режиме запрашивает только кооперативную остановку.
-- Чтобы явно включить аварийный путь принудительного завершения:
-
-```cpp
-core.setAllowForceTermination(true);
+```bash
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/your/prefix
+cmake --build build
+cmake --install build
 ```
 
-- Рекомендуемая миграция: используйте `cancel...`/`stop...` методы как основной путь, а принудительное завершение включайте только в контролируемых сценариях, где допустимо резкое прерывание выполнения.
+```cmake
+find_package(CoreTemplate REQUIRED)
+target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
+```
 
-## Модель потоков
-
-1. Главный поток: содержит объект `Core`. Все вызовы публичного API должны происходить отсюда.
-2. Потоки задач: создаются внутри библиотеки для каждого выполнения задачи. Зарегистрированные функции выполняются здесь.
-3. Взаимодействие: обмен между потоками задач и главным потоком происходит через механизм сигналов/слотов Qt (например, `TaskHelper::finished`) или события `QTimer`, запланированные в главном потоке (например, в `stopTask`).
-
-## Соображения безопасности
-
-- Соблюдение правила однопоточного доступа к публичному API критически важно.
-- Будьте осторожны с `QTimer::singleShot` и обратными вызовами `connect`, если они обращаются к общим данным вне внутренних структур `Core`, особенно если эти обращения не синхронизированы или не атомарны.
-- Класс `Core` использует типы Qt (`QList`, `QHash`, `QSharedPointer`), которые управляют своим временем жизни. Однако параллельный доступ к этим типам из разных потоков исключён благодаря правилам использования.
-
-## Как это работает
-
-1. Создаётся экземпляр класса `Core`.
-2. Вызываемые объекты регистрируются с помощью `Core::registerTask(...)`, им присваивается уникальный целочисленный `taskType` и, опционально, группа и таймаут остановки.
-3. Задачи ставятся в очередь выполнения с помощью `Core::addTask(taskType, ...args)`.
-4. `Core` управляет очередью и гарантирует, что одновременно выполняется только одна задача в группе.
-5. Когда освобождается слот (либо из‑за завершения предыдущей задачи, либо потому что задача принадлежит другой группе), `Core` запускает следующую подходящую задачу в собственном потоке, используя `CreateThread` (Windows) или `pthread_create` (Unix‑подобные системы).
-6. Связанная с задачей функция выполняется в новом потоке.
-7. Во время выполнения задача может проверять thread-local флаг остановки, полученный через `Core::stopTaskFlag()`, для плавного завершения.
-8. По завершении (нормальном или остановленном) задача испускает `finishedTask`. Если таймаут остановки истёк, менеджер пытается форсировать завершение: при неудаче испускается `stopTimedOutTask`, при успехе — `terminatedTask`.
-9. `Core` обновляет свои внутренние списки активных и ожидающих задач и приступает к запуску следующей ожидающей задачи, если это применимо.
-
-## Важные замечания
-
-- **Платформенные особенности:** библиотека использует `CreateThread`/`TerminateThread` на Windows и `pthread_create`/`pthread_cancel` на Unix‑подобных системах для низкоуровневого управления потоками.
-- **Потокобезопасность:** сам объект `Core` предназначен для использования из главного потока (или одного управляющего потока). Его методы для добавления/остановки задач вызываются из главного потока, а сигналы испускаются в контексте главного потока. Доступ к внутреннему флагу остановки (`Core::stopTaskFlag()`) thread-local и предназначен для использования *внутри* потока выполняющейся задачи.
-- **Отмена vs принудительное завершение:** используйте `cancelTaskById`/`stop...` методы для кооперативной остановки. `terminateTaskById` — аварийный путь, который опирается на платформенные API принудительного завершения и может резко прерывать выполнение. Принудительное завершение отключено по умолчанию и включается явно через `setAllowForceTermination(true)`. Если задача не остановилась в таймаут, испускается `stopTimedOutTask`; если форсированное завершение успешно — `terminatedTask`.
-- **Header‑Only:** библиотека полностью реализована в файле `core.h` как inline/header‑only библиотека.
-- **Требования:** требуется Qt 5.12 или новее (тестировалась с Qt 6.10.2) и поддержка C++17.
-
-## Предварительные условия
-
-- Qt 5.12 или новее (тестировалась с Qt 6.10.2)
-- Компилятор с поддержкой C++17
-
-## Базовый пример
+## Быстрый старт
 
 ```cpp
 #include "core.h"
-#include <QApplication>
-#include <QDebug>
 
-int main(int argc, char *argv[])
+#include <any>
+#include <chrono>
+#include <iostream>
+#include <thread>
+
+int main()
 {
-    QApplication app(argc, argv);
-
     Core core;
+    bool finished = false;
 
-    // Определяем простую задачу
-    auto simpleTask = [](int x) -> int {
-        qDebug() << "Running simple task with arg:" << x;
-        return x * 2;
-    };
-
-    // Регистрируем задачу с ID типа 1
-    core.registerTask(1, simpleTask);
-
-    // Подключаемся к сигналу finished для обработки результатов
-    QObject::connect(&core, &Core::finishedTask, [](long id, int type, const QVariantList &args, const QVariant &result) {
-        qDebug() << "Task finished:" << id << "Type:" << type << "Args:" << args << "Result:" << result;
+    core.registerTask(1, [](int a, int b) -> int {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return a + b;
     });
 
-    // Добавляем задачу для выполнения с аргументом 21
-    core.addTask(1, 21);
+    core.onFinished([&](const FinishedEvent& event) {
+        std::cout << "Result: " << std::any_cast<int>(event.result) << '\n';
+        finished = true;
+    });
 
-    // Цикл обработки событий приложения обычно работает здесь.
-    // Для этого примера просто подождём немного, чтобы увидеть завершение задачи.
-    QTimer timer;
-    timer.setSingleShot(true);
-    timer.start(2000); // Ждём 2 секунды
-    QObject::connect(&timer, &QTimer::timeout, &app, &QApplication::quit);
+    core.addTask(1, 10, 20);
 
-    return app.exec();
+    while (!finished) {
+        core.processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 ```
+
+Минимальный запускаемый пример находится в `example/console_main.cpp`.
+
+## Публичный API
+
+Полный API определён в `core.h`. Основные методы:
+
+- `registerTask`: регистрирует функцию, lambda, functor или member function по типу задачи.
+- `addTask`: ставит зарегистрированную задачу в очередь с аргументами.
+- `unregisterTask`: удаляет регистрацию типа задачи.
+- `onStarted`, `onFinished`, `onTerminated`, `onStopRequested`, `onStopTimedOut`: задают по одному callback на каждый вид события.
+- `processEvents`: доставляет события управляющему потоку; его нужно регулярно вызывать из управляющего потока.
+- `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup`: запрашивают кооперативную отмену.
+- `stopTaskById`, `stopTaskByType`, `stopTaskByGroup`, `stopTasks`, `stopAllTasks`, `stopTasksByGroup`: совместимые имена для cancellation API.
+- `terminateTaskById`: запрашивает остановку и использует force termination только если он явно включён.
+- `setAllowForceTermination`, `allowForceTermination`: управляют аварийным путём принудительного завершения.
+- `isTaskRegistered`, `groupByTask`, `isIdle`, `isTaskAddedByType`, `isTaskAddedByGroup`: запрашивают состояние задач.
+- `stopTaskFlag`: возвращает thread-local флаг остановки для текущей выполняющейся задачи.
+
+## Модель потоков
+
+`Core` рассчитан на один управляющий поток.
+
+- Создавайте и используйте объект `Core` из одного потока.
+- Вызывайте публичные методы `registerTask`, `addTask`, методы отмены и запросы состояния из этого же управляющего потока.
+- Зарегистрированные функции выполняются в worker threads, которыми управляет библиотека.
+- Завершение worker-задач ставится в очередь управляющей стороны; регулярно вызывайте `processEvents()`, чтобы доставлять callbacks и запускать ожидающие задачи.
+- Код внутри задачи не должен напрямую вызывать публичные методы `Core`. Для связи с управляющим потоком используйте механизм сообщений вашего приложения.
+
+## Отмена и принудительное завершение
+
+Отмена является кооперативной. Долгая задача должна периодически проверять:
+
+```cpp
+if (auto* stop = core.stopTaskFlag(); stop != nullptr && stop->load()) {
+    return;
+}
+```
+
+Force termination по умолчанию отключён:
+
+```cpp
+Core core;
+core.setAllowForceTermination(true);
+```
+
+Включайте его только в контролируемых аварийных сценариях. Резкое завершение потока может прервать пользовательский код в небезопасной точке.
 
 ## Пример группировки
 
 ```cpp
 #include "core.h"
-#include <QApplication>
-#include <QDebug>
-#include <QThread>
-#include <QTimer>
 
-int main(int argc, char *argv[])
+#include <any>
+#include <chrono>
+#include <iostream>
+#include <thread>
+
+int main()
 {
-    QApplication app(argc, argv);
-
     Core core;
+    int finishedCount = 0;
 
-    // Определяем задачи для Группы 1 (Ресурс A)
-    auto taskForResourceA1 = [](int id) -> int {
-        qDebug() << "Group 1 Task" << id << "- Starting on thread:" << QThread::currentThread();
-        QThread::msleep(2000); // Имитация работы, занимающей 2 секунды
-        qDebug() << "Group 1 Task" << id << "- Finished";
-        return id * 10;
+    auto work = [](int value) -> int {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return value * 10;
     };
 
-    auto taskForResourceA2 = [](int id) -> int {
-        qDebug() << "Group 1 Task" << id << "- Starting on thread:" << QThread::currentThread();
-        QThread::msleep(1000); // Имитация работы, занимающей 1 секунду
-        qDebug() << "Group 1 Task" << id << "- Finished";
-        return id * 20;
-    };
+    core.registerTask(1, work, 1);
+    core.registerTask(2, work, 1);
+    core.registerTask(3, work, 2);
 
-    // Определяем задачу для Группы 2 (Ресурс B) — может выполняться параллельно с Группой 1
-    auto taskForResourceB = [](int id) -> int {
-        qDebug() << "Group 2 Task" << id << "- Starting on thread:" << QThread::currentThread();
-        QThread::msleep(1500); // Имитация работы, занимающей 1.5 секунды
-        qDebug() << "Group 2 Task" << id << "- Finished";
-        return id * 30;
-    };
-
-    // Регистрируем задачи. Задачи Группы 1 будут выполняться последовательно.
-    core.registerTask(1, taskForResourceA1, 1); // Тип задачи 1, Группа 1
-    core.registerTask(2, taskForResourceA2, 1); // Тип задачи 2, Группа 1
-    core.registerTask(3, taskForResourceB, 2);  // Тип задачи 3, Группа 2
-
-    QObject::connect(&core, &Core::finishedTask, [](long id, int type, const QVariantList &args, const QVariant &result) {
-        qDebug() << "Task completed - ID:" << id << "Type:" << type << "Group:" << args.first().toInt() << "Result:" << result;
+    core.onFinished([&](const FinishedEvent& event) {
+        std::cout << "Task " << event.type
+                  << " result " << std::any_cast<int>(event.result) << '\n';
+        ++finishedCount;
     });
 
-    // Добавляем задачи
-    qDebug() << "Adding Group 1 Task 1 (ID: 10)";
-    core.addTask(1, 10); // Запустится немедленно
+    core.addTask(1, 10);
+    core.addTask(2, 20);
+    core.addTask(3, 30);
 
-    qDebug() << "Adding Group 1 Task 2 (ID: 20) - Should wait for Task 1";
-    core.addTask(2, 20); // Будет ждать в очереди за Задачей 1
-
-    qDebug() << "Adding Group 2 Task 1 (ID: 30) - Should start immediately, parallel to Group 1 Task 1";
-    core.addTask(3, 30); // Запустится немедленно, так как находится в Группе 2
-
-    // Ждём дольше, чтобы все задачи гарантированно завершились
-    QTimer timer;
-    timer.setSingleShot(true);
-    timer.start(6000); // Ждём 6 секунд
-    QObject::connect(&timer, &QTimer::timeout, &app, &QApplication::quit);
-
-    return app.exec();
+    while (finishedCount < 3) {
+        core.processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
-/* Ожидаемый вывод (порядок может немного меняться из‑за тайминга):
-Adding Group 1 Task 1 (ID: 10)
-Adding Group 1 Task 2 (ID: 20) - Should wait for Task 1
-Adding Group 2 Task 1 (ID: 30) - Should start immediately, parallel to Group 1 Task 1
-Group 1 Task 10 - Starting on thread: QThread(0x...)
-Group 2 Task 30 - Starting on thread: QThread(0x...) 
-Group 2 Task 30 - Finished
-Task completed - ID: 2 Type: 3 Group: 2 Result: 900
-Group 1 Task 10 - Finished
-Task completed - ID: 0 Type: 1 Group: 1 Result: 100
-Group 1 Task 20 - Starting on thread: QThread(0x...) 
-Group 1 Task 20 - Finished
-Task completed - ID: 1 Type: 2 Group: 1 Result: 400
-*/
 ```
+
+Задачи `1` и `2` находятся в группе `1`, поэтому выполняются последовательно. Задача `3` находится в группе `2`, поэтому может выполняться параллельно с группой `1`.
+
+## Тесты
+
+```bash
+cmake -S . -B build/std_only_check -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=ON
+cmake --build build/std_only_check
+ctest --test-dir build/std_only_check/tests --output-on-failure
+./build/std_only_check/example/ExampleConsoleApp
+```
+
+## Важные замечания
+
+- Core является header-only и реализован в `core.h`.
+- `TaskArgs` это `std::vector<std::any>`.
+- `TaskResult` это `std::any`; задача с `void` результатом создаёт пустой `std::any`.
+- Чтение payload через `std::any_cast<T>` остаётся ответственностью вызывающего кода.
+- Платформенный force-termination код остаётся opt-in аварийным путём.
 
 ## Поддержка проекта
 
-Если вы находите эту библиотеку полезной и хотите поддержать её разработку, воспользуйтесь кнопкой Sponsor. Любая поддержка добровольна и глубоко ценится, но полностью опциональна. Библиотека остаётся бесплатной и открытой.
+Если библиотека полезна, можно поддержать разработку через Sponsor. Любая поддержка добровольна и полностью опциональна. Библиотека остаётся бесплатной и открытой.

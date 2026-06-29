@@ -1,54 +1,30 @@
-# 🧵 CoreTemplate
+# CoreTemplate
 
-A modern, header-only C++/Qt library for **safe and efficient task execution in separate threads**, with built-in support for grouping, cooperative stopping, and type-safe registration.
+A modern, header-only C++17 library for running registered tasks in separate threads, with grouping, cooperative cancellation, stop timeouts, and a small callback/event API.
 
 [![Build Status](https://github.com/valeksan/CoreTemplate/actions/workflows/ci.yml/badge.svg)](https://github.com/valeksan/CoreTemplate/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/language-C++17-blue.svg)](https://en.cppreference.com/w/cpp/17)
-[![Qt](https://img.shields.io/badge/Qt-5.12+-green.svg)](https://www.qt.io/)
 
 *[Русская версия](README_RU.md)*
-## Table of Contents
 
-- [Features](#-features)
-- [Getting Started](#-getting-started)
-- [Example](#-example)
-- [Architecture and Usage Rules](#architecture-and-usage-rules)
-- [Public Methods](#public-methods)
-- [Migration and Safety Defaults](#migration-and-safety-defaults)
-- [Threading Model](#threading-model)
-- [Safety Considerations](#safety-considerations)
-- [How It Works](#how-it-works)
-- [Important Notes](#important-notes)
-- [Prerequisites](#prerequisites)
-- [Basic Example](#basic-example)
-- [Grouping Example](#grouping-example)
-- [Support the Project](#support-the-project)
+## Features
 
+- **Header-only core**: copy `core.h` or link the exported CMake interface target.
+- **No required Qt dependency in core**: public API uses standard C++ types.
+- **Type-safe registration**: register free functions, lambdas, functors, non-const member functions, and const member functions.
+- **Task grouping**: only one task per group runs at a time, while tasks from different groups can run concurrently.
+- **Cooperative cancellation**: tasks can check `stopTaskFlag()` and exit gracefully.
+- **Event callbacks**: observe started, finished, terminated, stop-requested, and stop-timeout events.
+- **C++17 payloads**: task arguments and results are exposed as `std::vector<std::any>` and `std::any`.
 
-## ✨ Features
+## Getting Started
 
-- ✅ **Header-only, zero overhead**: No extra dependencies, just copy `core.h` into your project.
-- ✅ **Type-safe registration**: Compile-time checks for function signatures using `std::function`, `if constexpr`, and `std::any`.
-- ✅ **Task grouping**: Run only one task per group (e.g., "network", "file I/O") to serialize access to shared resources.
-- ✅ **Cooperative stopping**: Tasks can check `stopTaskFlag()` and exit gracefully, with configurable timeouts.
-- ✅ **Modern C++17**: Utilizes `std::atomic`, `std::bind`, `enum class`, `QMetaType`, and `QSharedPointer`.
-- ✅ **Dedicated thread execution**: Each registered function runs in its own managed thread, avoiding blocking the main thread.
-- ✅ **Comprehensive task management**: Register, unregister, add, stop, terminate, and query tasks by type, group, or ID.
-- ✅ **Status queries**: Check if a task is registered, idle, added, or active.
+CoreTemplate requires a C++17 compiler. No Qt package is required to build or consume the core target.
 
-## 🚀 Getting Started
-
-Make sure you have **Qt 5.12 or later** and a **C++17 compatible compiler** (see [Prerequisites](#prerequisites) for details).
-
-### Installation
-
-Just copy `core.h` into your project. It's header‑only!
-
-Or use CMake integration from this repository root:
+Copy `core.h` into your project, or use CMake from this repository:
 
 ```cmake
-set(CMAKE_AUTOMOC ON)
 add_subdirectory(CoreTemplate)
 target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
 ```
@@ -62,248 +38,151 @@ cmake --install build
 ```
 
 ```cmake
-set(CMAKE_AUTOMOC ON)
 find_package(CoreTemplate REQUIRED)
 target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
 ```
 
-### Quick Start
+## Quick Start
 
 ```cpp
-// 1. Init task manager
-auto m_pCore = new Core();
+#include "core.h"
 
-// 2. Register a task
-m_pCore->registerTask(1, [](int a, int b) -> int {
-    QThread::msleep(100); // Simulate work
-    return a + b;
-});
+#include <any>
+#include <chrono>
+#include <iostream>
+#include <thread>
 
-// 3. Add it to the queue
-m_pCore->addTask(1, 10, 20);
+int main()
+{
+    Core core;
+    bool finished = false;
 
-// 4. Handle result
-connect(m_pCore, &Core::finishedTask, this, [](TaskId id, TaskType type, const QVariantList& argsList, const QVariant& result) {
-    Q_UNUSED(id);
-    Q_UNUSED(type);
-    Q_UNUSED(argsList);
-    qDebug() << "Result:" << result.toInt();
-});
+    core.registerTask(1, [](int a, int b) -> int {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return a + b;
+    });
+
+    core.onFinished([&](const FinishedEvent& event) {
+        std::cout << "Result: " << std::any_cast<int>(event.result) << '\n';
+        finished = true;
+    });
+
+    core.addTask(1, 10, 20);
+
+    while (!finished) {
+        core.processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
 ```
 
-> **Note:** The example above uses heap allocation (`new Core()`). You can also create a `Core` object on the stack (e.g., `Core core;`) as shown in the Basic Example below.
+See `example/console_main.cpp` for a minimal runnable example.
 
-## 🧪 Example
+## Public API
 
-See **example/** directory for a full Qt Widgets app demonstrating all features.
+The complete API is defined in `core.h`. The primary methods are:
 
-*For Qt6, it is preferable to use **CMakeLists.txt** when opening a project, and if Qt5 then **example_app.pro**.*
+- `registerTask`: registers a function, lambda, functor, or member function by task type.
+- `addTask`: queues a registered task with arguments.
+- `unregisterTask`: removes a registered task type.
+- `onStarted`, `onFinished`, `onTerminated`, `onStopRequested`, `onStopTimedOut`: set one callback per event kind.
+- `processEvents`: delivers queued owner-thread events and should be called by the managing thread.
+- `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup`: request cooperative cancellation.
+- `stopTaskById`, `stopTaskByType`, `stopTaskByGroup`, `stopTasks`, `stopAllTasks`, `stopTasksByGroup`: compatibility names for the cancellation API.
+- `terminateTaskById`: requests stop and uses force termination only when explicitly enabled.
+- `setAllowForceTermination`, `allowForceTermination`: control the emergency force-termination path.
+- `isTaskRegistered`, `groupByTask`, `isIdle`, `isTaskAddedByType`, `isTaskAddedByGroup`: query task state.
+- `stopTaskFlag`: returns the thread-local stop flag for the currently running task.
 
-If you need a minimal non-GUI start, use `example/console_main.cpp` (`ExampleConsoleApp` target in CMake).
+## Threading Model
 
-![example app screenshot](example/example_app_screenshot.jpg)
+`Core` is designed for one managing thread.
 
-## Architecture and Usage Rules
+- Create and use a `Core` instance from one thread.
+- Call public methods such as `registerTask`, `addTask`, cancellation, and query methods from that same managing thread.
+- Registered task functions run in worker threads managed by the library.
+- Worker completion is queued back to the managing side; call `processEvents()` regularly to deliver callbacks and start queued follow-up tasks.
+- Code running inside a task should not directly call public `Core` methods. Use your application-level message passing to communicate back to the managing thread.
 
-**IMPORTANT:** The `Core` class is **not thread-safe** for its public interface methods. To ensure stability:
+## Cancellation And Termination
 
-- **All calls to public methods** (e.g., `registerTask`, `addTask`, `cancelTaskById`, `terminateTaskById`, `isTask...`, etc.) **must originate from the same thread** where the `Core` object lives. Typically, this is the **main GUI thread**.
-- Functions registered via `registerTask` are executed in their own dedicated threads managed by the library.
-- Code running inside a registered task function **should avoid calling public `Core` methods directly**, as this can lead to race conditions and undefined behavior. If a task needs to interact with the `Core`, it should use `QMetaObject::invokeMethod` to send a message to the main thread, which then performs the action safely.
-
-## Public Methods
-
-The complete listing is defined in the header file `core.h`. Refer to the source code for detailed documentation.
-
-- `registerTask`: Registers a function/lambda/functor for later execution by type.
-- `addTask`: Adds a registered task to the execution queue.
-- `unregisterTask`: Removes a task type from registration.
-- `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup` (and backward-compatible `stop...` methods): Request graceful (cooperative) cancellation of tasks.
-- `terminateTaskById`: Requests stop and uses force-termination only when explicitly enabled via `setAllowForceTermination(true)`.
-- `setAllowForceTermination(bool)`: Enables/disables force-termination path (`false` by default).
-- `isTaskRegistered`, `isIdle`, `isTaskAddedByType`, `isTaskAddedByGroup`: Query task status.
-- `groupByTask`: Get the group associated with a task type.
-- `stopTaskFlag`: Returns a thread-local flag pointer for the currently executing task thread; use it inside task code for cooperative stopping.
-
-## Migration and Safety Defaults
-
-- Force termination is disabled by default (`allowForceTermination() == false`).
-- Calling `terminateTaskById` with force disabled requests cooperative stop only.
-- To opt in to emergency force termination, call:
+Cancellation is cooperative. A long-running task should periodically check:
 
 ```cpp
+if (auto* stop = core.stopTaskFlag(); stop != nullptr && stop->load()) {
+    return;
+}
+```
+
+Force termination is disabled by default:
+
+```cpp
+Core core;
 core.setAllowForceTermination(true);
 ```
 
-- Recommended migration: prefer `cancel...`/`stop...` methods and enable force termination only in controlled contexts where abrupt interruption is acceptable.
+Enable it only in controlled emergency scenarios. Abrupt thread termination can interrupt user code at unsafe points.
 
-## 🧵 Threading Model
-
-1. Main Thread: Hosts the `Core` object. All public API calls should come from here.
-2. Task Threads: Created internally by the library for each task execution. Registered functions run here.
-3. Communication: Interaction between Task Threads and Main Thread happens via Qt's signal/slot mechanism (e.g., `TaskHelper::finished`) or `QTimer` events scheduled on the main thread (e.g., in `stopTask`).
-
-## 🛡️ Safety Considerations
-
-- Adhering to the single-threaded access rule for the public Core Interface is crucial.
-- Be cautious with `QTimer::singleShot` and `connect` callbacks if they access shared data outside of `Core`'s internal structures, especially if those accesses are not synchronized or atomic.
-- The `Core` class uses Qt types (`QList`, `QHash`, `QSharedPointer`) which manage their own lifetimes. However, the concurrent access to these types from different threads is avoided by the usage rules.
-- Cancellation is cooperative. A task should periodically check `stopTaskFlag()` and exit on request.
-
-## ⚙️ How It Works
-
-1. An instance of the `Core` class is created.
-2. Callables are registered with `Core::registerTask(...)`, assigning them a unique `taskType` integer and optional group and timeout settings.
-3. Tasks are queued for execution using `Core::addTask(taskType, ...args)`.
-4. The `Core` manages a queue and ensures only one task per group runs at a time.
-5. When a slot opens up (either due to a previous task finishing or because the task belongs to a different group), the `Core` starts the next eligible task in its own thread using `CreateThread` (Windows) or `pthread_create` (Unix-like systems).
-6. The task's associated function executes within the new thread.
-7. While executing, a task can check a thread-local stop flag retrieved via `Core::stopTaskFlag()` to perform graceful shutdowns.
-8. Upon completion (normal or stopped), the task emits `finishedTask`. If stop timeout expires, manager attempts force-termination; on failure it emits `stopTimedOutTask`, on success it emits `terminatedTask`.
-9. The `Core` updates its internal lists of active and queued tasks and proceeds to start the next queued task if applicable.
-
-## 📌 Important Notes
-
-- **Platform Specifics:** The library uses `CreateThread` on Windows and `pthread_create` (detached) on Unix-like systems for low-level thread management.
-- **Thread Safety:** The `Core` object itself is designed to be used from the main thread (or a single managing thread). Its methods for adding/stopping tasks are called from the main thread, and its signals are emitted from the main thread context. Access to the internal stop flag (`Core::stopTaskFlag()`) is thread-local and intended for use *within* the executing task's thread.
-- **Cancellation vs Termination:** prefer `cancelTaskById`/`stop...` methods for cooperative stop requests. `terminateTaskById` is an emergency path that relies on forceful platform APIs and can interrupt execution abruptly. Force termination is disabled by default; enable it explicitly with `setAllowForceTermination(true)` only when required. On timeout without actual stop, `stopTimedOutTask` is emitted; if force-termination succeeds, `terminatedTask` is emitted.
-- **Header-Only:** The library is implemented entirely within `core.h` as an inline/header-only library.
-- **Requirements:** Requires Qt 5.12 or later (tested with Qt 6.10.2) and C++17 support.
-
-## 📦 Prerequisites
-
-- Qt 5.12 or later (tested with Qt 6.10.2)
-- C++17 compatible compiler
-
-## ✏️ Basic Example
+## Grouping Example
 
 ```cpp
 #include "core.h"
-#include <QApplication>
-#include <QDebug>
 
-int main(int argc, char *argv[])
+#include <any>
+#include <chrono>
+#include <iostream>
+#include <thread>
+
+int main()
 {
-    QApplication app(argc, argv);
-
     Core core;
+    int finishedCount = 0;
 
-    // Define a simple task
-    auto simpleTask = [](int x) -> int {
-        qDebug() << "Running simple task with arg:" << x;
-        return x * 2;
+    auto work = [](int value) -> int {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return value * 10;
     };
 
-    // Register the task with type ID 1
-    core.registerTask(1, simpleTask);
+    core.registerTask(1, work, 1);
+    core.registerTask(2, work, 1);
+    core.registerTask(3, work, 2);
 
-    // Connect to the finished signal to handle results
-    QObject::connect(&core, &Core::finishedTask, [](long id, int type, const QVariantList &args, const QVariant &result) {
-        qDebug() << "Task finished:" << id << "Type:" << type << "Args:" << args << "Result:" << result;
+    core.onFinished([&](const FinishedEvent& event) {
+        std::cout << "Task " << event.type
+                  << " result " << std::any_cast<int>(event.result) << '\n';
+        ++finishedCount;
     });
 
-    // Add the task for execution with argument 21
-    core.addTask(1, 21);
+    core.addTask(1, 10);
+    core.addTask(2, 20);
+    core.addTask(3, 30);
 
-    // Your application event loop would normally run here.
-    // For this example, we'll just wait a bit to see the task complete.
-    QTimer timer;
-    timer.setSingleShot(true);
-    timer.start(2000); // Wait 2 seconds
-    QObject::connect(&timer, &QTimer::timeout, &app, &QApplication::quit);
-
-    return app.exec();
+    while (finishedCount < 3) {
+        core.processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 ```
 
-## ✏️ Grouping Example
+Tasks `1` and `2` share group `1`, so they run sequentially. Task `3` belongs to group `2`, so it can run concurrently with group `1`.
 
-```cpp
-#include "core.h"
-#include <QApplication>
-#include <QDebug>
-#include <QThread>
-#include <QTimer>
+## Tests
 
-int main(int argc, char *argv[])
-{
-    QApplication app(argc, argv);
-
-    Core core;
-
-    // Define tasks for Group 1 (Resource A)
-    auto taskForResourceA1 = [](int id) -> int {
-        qDebug() << "Group 1 Task" << id << "- Starting on thread:" << QThread::currentThread();
-        QThread::msleep(2000); // Simulate work taking 2 seconds
-        qDebug() << "Group 1 Task" << id << "- Finished";
-        return id * 10;
-    };
-
-    auto taskForResourceA2 = [](int id) -> int {
-        qDebug() << "Group 1 Task" << id << "- Starting on thread:" << QThread::currentThread();
-        QThread::msleep(1000); // Simulate work taking 1 second
-        qDebug() << "Group 1 Task" << id << "- Finished";
-        return id * 20;
-    };
-
-    // Define a task for Group 2 (Resource B) - Can run concurrently with Group 1
-    auto taskForResourceB = [](int id) -> int {
-        qDebug() << "Group 2 Task" << id << "- Starting on thread:" << QThread::currentThread();
-        QThread::msleep(1500); // Simulate work taking 1.5 seconds
-        qDebug() << "Group 2 Task" << id << "- Finished";
-        return id * 30;
-    };
-
-    // Register tasks. Group 1 tasks will be serialized.
-    core.registerTask(1, taskForResourceA1, 1); // Task type 1, Group 1
-    core.registerTask(2, taskForResourceA2, 1); // Task type 2, Group 1
-    core.registerTask(3, taskForResourceB, 2);  // Task type 3, Group 2
-
-    QObject::connect(&core, &Core::finishedTask, [](long id, int type, const QVariantList &args, const QVariant &result) {
-        qDebug() << "Task completed - ID:" << id << "Type:" << type << "Group:" << args.first().toInt() << "Result:" << result;
-    });
-
-    // Add tasks
-    qDebug() << "Adding Group 1 Task 1 (ID: 10)";
-    core.addTask(1, 10); // Will start immediately
-
-    qDebug() << "Adding Group 1 Task 2 (ID: 20) - Should wait for Task 1";
-    core.addTask(2, 20); // Will wait in queue behind Task 1
-
-    qDebug() << "Adding Group 2 Task 1 (ID: 30) - Should start immediately, parallel to Group 1 Task 1";
-    core.addTask(3, 30); // Will start immediately as it's in Group 2
-
-    // Wait longer to ensure all tasks complete
-    QTimer timer;
-    timer.setSingleShot(true);
-    timer.start(6000); // Wait 6 seconds
-    QObject::connect(&timer, &QTimer::timeout, &app, &QApplication::quit);
-
-    return app.exec();
-}
-/* Expected Output (order might vary slightly due to timing):
-Adding Group 1 Task 1 (ID: 10)
-Adding Group 1 Task 2 (ID: 20) - Should wait for Task 1
-Adding Group 2 Task 1 (ID: 30) - Should start immediately, parallel to Group 1 Task 1
-Group 1 Task 10 - Starting on thread: QThread(0x...)
-Group 2 Task 30 - Starting on thread: QThread(0x...) 
-Group 2 Task 30 - Finished
-Task completed - ID: 2 Type: 3 Group: 2 Result: 900
-Group 1 Task 10 - Finished
-Task completed - ID: 0 Type: 1 Group: 1 Result: 100
-Group 1 Task 20 - Starting on thread: QThread(0x...) 
-Group 1 Task 20 - Finished
-Task completed - ID: 1 Type: 2 Group: 1 Result: 400
-*/
+```bash
+cmake -S . -B build/std_only_check -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=ON
+cmake --build build/std_only_check
+ctest --test-dir build/std_only_check/tests --output-on-failure
+./build/std_only_check/example/ExampleConsoleApp
 ```
 
-## ☕ Support the Project
+## Important Notes
 
-If you find this library helpful and wish to support its development, feel free to use the Sponsor button. Any support is voluntary and deeply appreciated, but entirely optional. The library remains free and open-source.
+- The core is header-only and implemented in `core.h`.
+- `TaskArgs` is `std::vector<std::any>`.
+- `TaskResult` is `std::any`; a `void` task produces an empty `std::any`.
+- `std::any_cast<T>` is the caller's responsibility when reading callback payloads.
+- Platform force-termination code exists as an opt-in emergency path.
 
-*P.S.
-**Currently, due to regional restrictions, I don’t have access to international payment systems like Visa or PayPal.**
-However, I do accept support via **cryptocurrency** (e.g., BTC). If you'd like to contribute this way, please [open an issue](https://github.com/valeksan/CoreTemplate/issues) or contact me directly — I’ll share the wallet details.
-I hope to gain access to standard financial tools in the future — perhaps after relocating to a place with fewer digital barriers. Until then, crypto is my only option for receiving global support.*
+## Support The Project
 
-***Just in case, I don't support wars!***
+If you find this library helpful and wish to support its development, feel free to use the Sponsor button. Any support is voluntary and entirely optional. The library remains free and open-source.
