@@ -1,12 +1,37 @@
-#include <QtTest/QtTest>
-#include <QThread>
-#include <QElapsedTimer>
-#include <atomic>
-#include <vector>
-
 #include "../core.h"
 
+#include <any>
+#include <atomic>
+#include <chrono>
+#include <exception>
+#include <functional>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
+
+#define REQUIRE(condition) \
+    do { \
+        if (!(condition)) { \
+            throw std::runtime_error(std::string("Assertion failed: ") + #condition); \
+        } \
+    } while (false)
+
+#define REQUIRE_EQ(actual, expected) \
+    do { \
+        const auto actualValue = (actual); \
+        const auto expectedValue = (expected); \
+        if (!(actualValue == expectedValue)) { \
+            throw std::runtime_error(std::string("Comparison failed: ") + #actual + " == " + #expected); \
+        } \
+    } while (false)
+
 namespace {
+void sleepMs(int ms) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
 struct CoreEventRecorder {
     std::vector<StartedEvent> started;
     std::vector<FinishedEvent> finished;
@@ -35,14 +60,13 @@ struct CoreEventRecorder {
 
 template <typename Predicate>
 bool waitUntil(Core& core, Predicate predicate, int timeoutMs) {
-    QElapsedTimer timer;
-    timer.start();
-    while (timer.elapsed() < timeoutMs) {
+    const auto startedAt = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - startedAt < std::chrono::milliseconds(timeoutMs)) {
         core.processEvents();
         if (predicate()) {
             return true;
         }
-        QTest::qWait(1);
+        sleepMs(1);
     }
     core.processEvents();
     return predicate();
@@ -51,12 +75,15 @@ bool waitUntil(Core& core, Predicate predicate, int timeoutMs) {
 int firstArgAsInt(const TaskArgs& args) {
     return std::any_cast<int>(args.at(0));
 }
+
+struct TestCase {
+    const char* name;
+    std::function<void()> function;
+};
 }
 
-class CoreTests final : public QObject {
-    Q_OBJECT
-
-private slots:
+class CoreTests final {
+public:
     void executesRegisteredTaskAndEmitsFinished();
     void invokesStdCallbacksWithAnyPayload();
     void serializesTasksWithinSameGroup();
@@ -85,11 +112,11 @@ void CoreTests::executesRegisteredTaskAndEmitsFinished() {
 
     core.addTask(1, 21);
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 2000));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 2000));
 
     const FinishedEvent& event = events.finished.front();
-    QCOMPARE(event.type, 1);
-    QCOMPARE(std::any_cast<int>(event.result), 42);
+    REQUIRE_EQ(event.type, 1);
+    REQUIRE_EQ(std::any_cast<int>(event.result), 42);
 }
 
 void CoreTests::invokesStdCallbacksWithAnyPayload() {
@@ -103,23 +130,23 @@ void CoreTests::invokesStdCallbacksWithAnyPayload() {
 
     core.onStarted([&startedSeen](const StartedEvent& event) {
         startedSeen = true;
-        QCOMPARE(event.type, 2);
-        QCOMPARE(event.args.size(), static_cast<std::size_t>(1));
-        QCOMPARE(std::any_cast<int>(event.args.at(0)), 37);
+        REQUIRE_EQ(event.type, 2);
+        REQUIRE_EQ(event.args.size(), static_cast<std::size_t>(1));
+        REQUIRE_EQ(std::any_cast<int>(event.args.at(0)), 37);
     });
 
     core.onFinished([&finishedSeen](const FinishedEvent& event) {
         finishedSeen = true;
-        QCOMPARE(event.type, 2);
-        QCOMPARE(event.args.size(), static_cast<std::size_t>(1));
-        QCOMPARE(std::any_cast<int>(event.args.at(0)), 37);
-        QCOMPARE(std::any_cast<int>(event.result), 42);
+        REQUIRE_EQ(event.type, 2);
+        REQUIRE_EQ(event.args.size(), static_cast<std::size_t>(1));
+        REQUIRE_EQ(std::any_cast<int>(event.args.at(0)), 37);
+        REQUIRE_EQ(std::any_cast<int>(event.result), 42);
     });
 
     core.addTask(2, 37);
 
-    QVERIFY(startedSeen);
-    QVERIFY(waitUntil(core, [&finishedSeen]() { return finishedSeen; }, 2000));
+    REQUIRE(startedSeen);
+    REQUIRE(waitUntil(core, [&finishedSeen]() { return finishedSeen; }, 2000));
 }
 
 void CoreTests::serializesTasksWithinSameGroup() {
@@ -132,7 +159,7 @@ void CoreTests::serializesTasksWithinSameGroup() {
         int observedMax = maxInGroup.load();
         while (now > observedMax && !maxInGroup.compare_exchange_weak(observedMax, now)) {
         }
-        QThread::msleep(120);
+        sleepMs(120);
         --inGroup;
         return 0;
     };
@@ -146,8 +173,8 @@ void CoreTests::serializesTasksWithinSameGroup() {
     core.addTask(10);
     core.addTask(11);
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 2; }, 5000));
-    QCOMPARE(maxInGroup.load(), 1);
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 2; }, 5000));
+    REQUIRE_EQ(maxInGroup.load(), 1);
 }
 
 void CoreTests::cancelTaskByIdStopsCooperatively() {
@@ -158,7 +185,7 @@ void CoreTests::cancelTaskByIdStopsCooperatively() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -14;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return 14;
     }, 14, 100);
@@ -167,15 +194,15 @@ void CoreTests::cancelTaskByIdStopsCooperatively() {
     events.attach(core);
 
     core.addTask(14);
-    QVERIFY(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
+    REQUIRE(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
 
     const auto id = events.started.front().id;
     core.cancelTaskById(id);
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 5000));
     const FinishedEvent& event = events.finished.front();
-    QCOMPARE(event.type, 14);
-    QCOMPARE(std::any_cast<int>(event.result), -14);
+    REQUIRE_EQ(event.type, 14);
+    REQUIRE_EQ(std::any_cast<int>(event.result), -14);
 }
 
 void CoreTests::stopsTaskCooperativelyByFlag() {
@@ -186,7 +213,7 @@ void CoreTests::stopsTaskCooperativelyByFlag() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -1;
             }
-            QThread::msleep(5);
+            sleepMs(5);
         }
         return 1;
     }, 20, 80);
@@ -195,14 +222,14 @@ void CoreTests::stopsTaskCooperativelyByFlag() {
     events.attach(core);
 
     core.addTask(20);
-    QTest::qWait(30);
+    sleepMs(30);
     core.stopTaskByType(20);
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 5000));
-    QCOMPARE(events.terminated.size(), static_cast<std::size_t>(0));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 5000));
+    REQUIRE_EQ(events.terminated.size(), static_cast<std::size_t>(0));
 
     const FinishedEvent& event = events.finished.front();
-    QCOMPARE(std::any_cast<int>(event.result), -1);
+    REQUIRE_EQ(std::any_cast<int>(event.result), -1);
 }
 
 void CoreTests::stopAllTasksStopsQueuedAndActive() {
@@ -213,7 +240,7 @@ void CoreTests::stopAllTasksStopsQueuedAndActive() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 30, 200);
@@ -224,11 +251,11 @@ void CoreTests::stopAllTasksStopsQueuedAndActive() {
     core.addTask(30, 1);
     core.addTask(30, 2);
 
-    QTest::qWait(25);
+    sleepMs(25);
     core.stopAllTasks();
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
-    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
 
     bool queuedTerminated = false;
     for (const TerminatedEvent& event : events.terminated) {
@@ -237,7 +264,7 @@ void CoreTests::stopAllTasksStopsQueuedAndActive() {
             break;
         }
     }
-    QVERIFY(queuedTerminated);
+    REQUIRE(queuedTerminated);
 
     bool activeStoppedCooperatively = false;
     for (const FinishedEvent& event : events.finished) {
@@ -247,7 +274,7 @@ void CoreTests::stopAllTasksStopsQueuedAndActive() {
             break;
         }
     }
-    QVERIFY(activeStoppedCooperatively);
+    REQUIRE(activeStoppedCooperatively);
 }
 
 void CoreTests::stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops() {
@@ -258,7 +285,7 @@ void CoreTests::stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 33, 120);
@@ -291,13 +318,13 @@ void CoreTests::stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops() {
     core.addTask(33, 1); // active
     core.addTask(34, 2); // queued in same group
 
-    QTest::qWait(20);
+    sleepMs(20);
     sinceStop = std::chrono::steady_clock::now();
     stopTimerStarted = true;
     core.stopTasks();
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() == 2; }, 5000));
-    QVERIFY(queuedStartedAfterStopMs >= 100);
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 2; }, 5000));
+    REQUIRE(queuedStartedAfterStopMs >= 100);
 
     bool activeStopped = false;
     bool queuedResumed = false;
@@ -314,8 +341,8 @@ void CoreTests::stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops() {
             queuedResumed = true;
         }
     }
-    QVERIFY(activeStopped);
-    QVERIFY(queuedResumed);
+    REQUIRE(activeStopped);
+    REQUIRE(queuedResumed);
 }
 
 void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
@@ -326,7 +353,7 @@ void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 1, 200);
@@ -336,13 +363,13 @@ void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 1, 200);
 
     core.registerTask(42, [](int tag) -> int {
-        QThread::msleep(80);
+        sleepMs(80);
         return tag * 10;
     }, 2, 200);
 
@@ -353,11 +380,11 @@ void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
     core.addTask(41, 2);
     core.addTask(42, 3);
 
-    QTest::qWait(25);
+    sleepMs(25);
     core.stopTasksByGroup(1, true);
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 2; }, 5000));
-    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() >= 2; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
 
     bool group1QueuedTerminated = false;
     for (const TerminatedEvent& event : events.terminated) {
@@ -366,7 +393,7 @@ void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
             break;
         }
     }
-    QVERIFY(group1QueuedTerminated);
+    REQUIRE(group1QueuedTerminated);
 
     bool group1ActiveStopped = false;
     bool group2Completed = false;
@@ -379,8 +406,8 @@ void CoreTests::stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup() {
             group2Completed = true;
         }
     }
-    QVERIFY(group1ActiveStopped);
-    QVERIFY(group2Completed);
+    REQUIRE(group1ActiveStopped);
+    REQUIRE(group2Completed);
 }
 
 void CoreTests::cancelTasksByGroupAliasWorks() {
@@ -391,7 +418,7 @@ void CoreTests::cancelTasksByGroupAliasWorks() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 9, 150);
@@ -401,7 +428,7 @@ void CoreTests::cancelTasksByGroupAliasWorks() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 9, 150);
@@ -411,11 +438,11 @@ void CoreTests::cancelTasksByGroupAliasWorks() {
 
     core.addTask(45, 1);
     core.addTask(46, 2);
-    QTest::qWait(20);
+    sleepMs(20);
     core.cancelTasksByGroup(9, true);
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
-    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
 
     bool queuedCancelled = false;
     for (const TerminatedEvent& event : events.terminated) {
@@ -424,7 +451,7 @@ void CoreTests::cancelTasksByGroupAliasWorks() {
             break;
         }
     }
-    QVERIFY(queuedCancelled);
+    REQUIRE(queuedCancelled);
 }
 
 
@@ -436,7 +463,7 @@ void CoreTests::cancelAllTasksAliasWorks() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 10, 150);
@@ -446,11 +473,11 @@ void CoreTests::cancelAllTasksAliasWorks() {
 
     core.addTask(47, 1);
     core.addTask(47, 2); // queued in same group
-    QTest::qWait(20);
+    sleepMs(20);
     core.cancelAllTasks();
 
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
-    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() >= 1; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() >= 1; }, 5000));
 }
 void CoreTests::unregisterTaskFailsForActiveAndQueued() {
     Core core;
@@ -460,21 +487,21 @@ void CoreTests::unregisterTaskFailsForActiveAndQueued() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 50, 150);
 
     core.addTask(50, 1);
-    QTest::qWait(20);
-    QVERIFY(!core.unregisterTask(50));
+    sleepMs(20);
+    REQUIRE(!core.unregisterTask(50));
 
     core.registerTask(51, [&core](int tag) -> int {
         for (int i = 0; i < 800; ++i) {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 60, 150);
@@ -484,20 +511,20 @@ void CoreTests::unregisterTaskFailsForActiveAndQueued() {
             if (auto* stop = core.stopTaskFlag(); stop && stop->load()) {
                 return -tag;
             }
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return tag;
     }, 60, 150);
 
     core.addTask(51, 2);
     core.addTask(52, 3);
-    QTest::qWait(20);
-    QVERIFY(!core.unregisterTask(52));
+    sleepMs(20);
+    REQUIRE(!core.unregisterTask(52));
 
     CoreEventRecorder events;
     events.attach(core);
     core.stopAllTasks();
-    QVERIFY(waitUntil(core, [&events]() { return events.finished.size() >= 2; }, 5000));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() >= 2; }, 5000));
 }
 
 void CoreTests::registerTaskWithNullObjectThrows() {
@@ -516,8 +543,8 @@ void CoreTests::registerTaskWithNullObjectThrows() {
         thrown = true;
     }
 
-    QVERIFY(thrown);
-    QVERIFY(!core.isTaskRegistered(70));
+    REQUIRE(thrown);
+    REQUIRE(!core.isTaskRegistered(70));
 }
 
 void CoreTests::destroyingCoreRequestsStopAndWaitsForActiveTask() {
@@ -531,17 +558,17 @@ void CoreTests::destroyingCoreRequestsStopAndWaitsForActiveTask() {
                     taskFinished.store(true);
                     return -80;
                 }
-                QThread::msleep(1);
+                sleepMs(1);
             }
             taskFinished.store(true);
             return 80;
         }, 80, 100);
 
         core.addTask(80);
-        QTest::qWait(20);
+        sleepMs(20);
     }
 
-    QVERIFY(taskFinished.load());
+    REQUIRE(taskFinished.load());
 }
 
 void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() {
@@ -549,7 +576,7 @@ void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() 
 
     core.registerTask(82, []() -> int {
         for (int i = 0; i < 2000; ++i) {
-            QThread::msleep(2);
+            sleepMs(2);
         }
         return 82;
     }, 82, 80);
@@ -558,19 +585,19 @@ void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() 
     events.attach(core);
 
     core.addTask(82);
-    QVERIFY(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
+    REQUIRE(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
     const auto id = events.started.front().id;
 
     core.terminateTaskById(id);
 
-    QVERIFY(waitUntil(core, [&events]() { return events.stopTimedOut.size() == 1; }, 3000));
-    QCOMPARE(events.terminated.size(), static_cast<std::size_t>(0));
-    QVERIFY(!core.isIdle());
+    REQUIRE(waitUntil(core, [&events]() { return events.stopTimedOut.size() == 1; }, 3000));
+    REQUIRE_EQ(events.terminated.size(), static_cast<std::size_t>(0));
+    REQUIRE(!core.isIdle());
 
     core.setAllowForceTermination(true);
     core.terminateTaskById(id);
-    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
-    QVERIFY(core.isIdle());
+    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
+    REQUIRE(core.isIdle());
 }
 
 void CoreTests::terminateTaskByIdForceStopsNonCooperativeTask() {
@@ -579,7 +606,7 @@ void CoreTests::terminateTaskByIdForceStopsNonCooperativeTask() {
 
     core.registerTask(81, []() -> int {
         for (int i = 0; i < 600; ++i) {
-            QThread::msleep(10);
+            sleepMs(10);
         }
         return 81;
     }, 81, 200);
@@ -588,17 +615,51 @@ void CoreTests::terminateTaskByIdForceStopsNonCooperativeTask() {
     events.attach(core);
 
     core.addTask(81);
-    QVERIFY(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
+    REQUIRE(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
 
     const auto id = events.started.front().id;
 
-    QTest::qWait(30);
+    sleepMs(30);
     core.terminateTaskById(id);
 
-    QVERIFY(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
-    QVERIFY(events.finished.size() == 0 || events.finished.size() == 1);
-    QVERIFY(core.isIdle());
+    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
+    REQUIRE(events.finished.size() == 0 || events.finished.size() == 1);
+    REQUIRE(core.isIdle());
 }
 
-QTEST_MAIN(CoreTests)
-#include "core_tests.moc"
+int main()
+{
+    CoreTests tests;
+    const TestCase testCases[] = {
+        {"executesRegisteredTaskAndEmitsFinished", [&tests]() { tests.executesRegisteredTaskAndEmitsFinished(); }},
+        {"invokesStdCallbacksWithAnyPayload", [&tests]() { tests.invokesStdCallbacksWithAnyPayload(); }},
+        {"serializesTasksWithinSameGroup", [&tests]() { tests.serializesTasksWithinSameGroup(); }},
+        {"cancelTaskByIdStopsCooperatively", [&tests]() { tests.cancelTaskByIdStopsCooperatively(); }},
+        {"stopsTaskCooperativelyByFlag", [&tests]() { tests.stopsTaskCooperativelyByFlag(); }},
+        {"stopAllTasksStopsQueuedAndActive", [&tests]() { tests.stopAllTasksStopsQueuedAndActive(); }},
+        {"stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops", [&tests]() { tests.stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops(); }},
+        {"stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup", [&tests]() { tests.stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup(); }},
+        {"cancelTasksByGroupAliasWorks", [&tests]() { tests.cancelTasksByGroupAliasWorks(); }},
+        {"cancelAllTasksAliasWorks", [&tests]() { tests.cancelAllTasksAliasWorks(); }},
+        {"unregisterTaskFailsForActiveAndQueued", [&tests]() { tests.unregisterTaskFailsForActiveAndQueued(); }},
+        {"registerTaskWithNullObjectThrows", [&tests]() { tests.registerTaskWithNullObjectThrows(); }},
+        {"destroyingCoreRequestsStopAndWaitsForActiveTask", [&tests]() { tests.destroyingCoreRequestsStopAndWaitsForActiveTask(); }},
+        {"terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly", [&tests]() { tests.terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly(); }},
+        {"terminateTaskByIdForceStopsNonCooperativeTask", [&tests]() { tests.terminateTaskByIdForceStopsNonCooperativeTask(); }},
+    };
+
+    for (const TestCase& testCase : testCases) {
+        try {
+            testCase.function();
+            std::cout << "[PASS] " << testCase.name << '\n';
+        } catch (const std::exception& e) {
+            std::cerr << "[FAIL] " << testCase.name << ": " << e.what() << '\n';
+            return 1;
+        } catch (...) {
+            std::cerr << "[FAIL] " << testCase.name << ": unknown exception\n";
+            return 1;
+        }
+    }
+
+    return 0;
+}
