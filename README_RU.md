@@ -29,6 +29,22 @@ add_subdirectory(CoreTemplateStd)
 target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
 ```
 
+Подключение напрямую из GitHub через `FetchContent`:
+
+```cmake
+include(FetchContent)
+
+FetchContent_Declare(
+    CoreTemplateStd
+    GIT_REPOSITORY https://github.com/valeksan/CoreTemplateStd.git
+    GIT_TAG main
+)
+
+FetchContent_MakeAvailable(CoreTemplateStd)
+
+target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
+```
+
 Установка и подключение через `find_package`:
 
 ```bash
@@ -48,6 +64,17 @@ target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
 find_package(CoreTemplate REQUIRED)
 target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
 ```
+
+## Миграция с Qt CoreTemplate
+
+CoreTemplateStd - это breaking std-only ветка исходного Qt-ориентированного API:
+
+- Qt-сигналы вроде `finishedTask` заменены callback setters вроде `onFinished`.
+- Payload на `QVariant` и `QVariantList` заменён на `std::any` и `std::vector<std::any>`.
+- Доставка через Qt event loop заменена явным вызовом `processEvents()` из управляющего потока.
+- `QObject` ownership удалён; `Core` создаётся напрямую без parent object.
+- Force termination больше не убивает worker threads в `std::thread` backend; non-cooperative задачи получают stop request и timeout events.
+- Старые CMake-имена остаются compatibility aliases, но для нового кода лучше использовать `CoreTemplateStd` и `CoreTemplateStd::CoreTemplateStd`.
 
 ## Быстрый старт
 
