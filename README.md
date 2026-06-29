@@ -16,6 +16,7 @@ A modern, header-only C++17 library for running registered tasks in separate thr
 - **Task grouping**: only one task per group runs at a time, while tasks from different groups can run concurrently.
 - **Cooperative cancellation**: tasks can check `stopTaskFlag()` and exit gracefully.
 - **Event callbacks**: observe started, finished, terminated, stop-requested, and stop-timeout events.
+- **Configurable logging**: redirect core debug and warning messages with a standard C++ callback.
 - **C++17 payloads**: task arguments and results are exposed as `std::vector<std::any>` and `std::any`.
 
 ## Getting Started
@@ -120,6 +121,7 @@ The complete API is defined in `core.h`. The primary methods are:
 - `addTask`: queues a registered task with arguments.
 - `unregisterTask`: removes a registered task type.
 - `onStarted`, `onFinished`, `onTerminated`, `onStopRequested`, `onStopTimedOut`: set one callback per event kind.
+- `setLogHandler`, `clearLogHandler`: configure or reset the global std-only core log sink.
 - `processEvents`: delivers queued owner-thread events and should be called by the managing thread.
 - `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup`: request cooperative cancellation.
 - `stopTaskById`, `stopTaskByType`, `stopTaskByGroup`, `stopTasks`, `stopAllTasks`, `stopTasksByGroup`: compatibility names for the cancellation API.
@@ -212,6 +214,7 @@ ctest --test-dir build/std_only_check --output-on-failure
 ## Important Notes
 
 - The core is header-only and implemented in `core.h`.
+- Core debug and warning messages go to `std::clog` and `std::cerr` by default, or to the handler configured with `Core::setLogHandler`.
 - `TaskArgs` is `std::vector<std::any>`.
 - `TaskResult` is `std::any`; a `void` task produces an empty `std::any`.
 - `std::any_cast<T>` is the caller's responsibility when reading callback payloads.

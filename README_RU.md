@@ -16,6 +16,7 @@
 - **Группировка задач**: одновременно выполняется только одна задача в группе, а задачи из разных групп могут выполняться параллельно.
 - **Кооперативная отмена**: задачи могут проверять `stopTaskFlag()` и завершаться аккуратно.
 - **Callback events**: можно подписаться на started, finished, terminated, stop-requested и stop-timeout события.
+- **Настраиваемое логирование**: debug и warning сообщения core можно перенаправить через callback стандартной библиотеки.
 - **C++17 payloads**: аргументы и результаты задач доступны как `std::vector<std::any>` и `std::any`.
 
 ## Начало работы
@@ -120,6 +121,7 @@ int main()
 - `addTask`: ставит зарегистрированную задачу в очередь с аргументами.
 - `unregisterTask`: удаляет регистрацию типа задачи.
 - `onStarted`, `onFinished`, `onTerminated`, `onStopRequested`, `onStopTimedOut`: задают по одному callback на каждый вид события.
+- `setLogHandler`, `clearLogHandler`: настраивают или сбрасывают глобальный std-only обработчик логов core.
 - `processEvents`: доставляет события управляющему потоку; его нужно регулярно вызывать из управляющего потока.
 - `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup`: запрашивают кооперативную отмену.
 - `stopTaskById`, `stopTaskByType`, `stopTaskByGroup`, `stopTasks`, `stopAllTasks`, `stopTasksByGroup`: совместимые имена для cancellation API.
@@ -212,6 +214,7 @@ ctest --test-dir build/std_only_check --output-on-failure
 ## Важные замечания
 
 - Core является header-only и реализован в `core.h`.
+- Debug и warning сообщения core по умолчанию пишутся в `std::clog` и `std::cerr`, либо в обработчик, заданный через `Core::setLogHandler`.
 - `TaskArgs` это `std::vector<std::any>`.
 - `TaskResult` это `std::any`; задача с `void` результатом создаёт пустой `std::any`.
 - Чтение payload через `std::any_cast<T>` остаётся ответственностью вызывающего кода.

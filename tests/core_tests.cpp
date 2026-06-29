@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #define REQUIRE(condition) \
@@ -96,6 +97,7 @@ public:
     void cancelAllTasksAliasWorks();
     void unregisterTaskFailsForActiveAndQueued();
     void registerTaskWithNullObjectThrows();
+    void capturesCoreLogsWithCustomHandler();
     void destroyingCoreRequestsStopAndWaitsForActiveTask();
     void terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly();
     void terminateTaskByIdForceReportsTimeoutForNonCooperativeTask();
@@ -547,6 +549,42 @@ void CoreTests::registerTaskWithNullObjectThrows() {
     REQUIRE(!core.isTaskRegistered(70));
 }
 
+void CoreTests::capturesCoreLogsWithCustomHandler() {
+    class LocalCalculator {
+    public:
+        int add(int a, int b) { return a + b; }
+    };
+
+    std::vector<std::pair<CoreLogLevel, std::string>> logs;
+    Core::setLogHandler([&logs](CoreLogLevel level, const std::string& message) {
+        logs.emplace_back(level, message);
+    });
+
+    try {
+        Core core;
+        LocalCalculator* pNullObj = nullptr;
+
+        bool thrown = false;
+        try {
+            core.registerTask(71, &LocalCalculator::add, pNullObj);
+        } catch (const std::logic_error&) {
+            thrown = true;
+        }
+
+        REQUIRE(thrown);
+    } catch (...) {
+        Core::clearLogHandler();
+        throw;
+    }
+
+    Core::clearLogHandler();
+
+    REQUIRE(!logs.empty());
+    REQUIRE_EQ(logs.front().first, CoreLogLevel::Warning);
+    REQUIRE(logs.front().second.find("task object is null") != std::string::npos);
+    REQUIRE(logs.front().second.find("71") != std::string::npos);
+}
+
 void CoreTests::destroyingCoreRequestsStopAndWaitsForActiveTask() {
     std::atomic_bool taskFinished{false};
 
@@ -646,6 +684,7 @@ int main()
         {"cancelAllTasksAliasWorks", [&tests]() { tests.cancelAllTasksAliasWorks(); }},
         {"unregisterTaskFailsForActiveAndQueued", [&tests]() { tests.unregisterTaskFailsForActiveAndQueued(); }},
         {"registerTaskWithNullObjectThrows", [&tests]() { tests.registerTaskWithNullObjectThrows(); }},
+        {"capturesCoreLogsWithCustomHandler", [&tests]() { tests.capturesCoreLogsWithCustomHandler(); }},
         {"destroyingCoreRequestsStopAndWaitsForActiveTask", [&tests]() { tests.destroyingCoreRequestsStopAndWaitsForActiveTask(); }},
         {"terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly", [&tests]() { tests.terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly(); }},
         {"terminateTaskByIdForceReportsTimeoutForNonCooperativeTask", [&tests]() { tests.terminateTaskByIdForceReportsTimeoutForNonCooperativeTask(); }},

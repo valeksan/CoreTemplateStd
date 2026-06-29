@@ -17,6 +17,8 @@
 #include <iostream>
 #include <mutex>
 #include <deque>
+#include <sstream>
+#include <string>
 
 // --- Using aliases to improve readability ---
 using TaskId = long;
@@ -26,19 +28,57 @@ using TaskStopTimeout = int; // ms
 using TaskArgs = std::vector<std::any>;
 using TaskResult = std::any;
 
+enum class CoreLogLevel {
+    Debug,
+    Warning
+};
+
+using CoreLogHandler = std::function<void(CoreLogLevel, const std::string&)>;
+
 namespace core_detail {
 inline thread_local std::atomic_bool* g_currentStopFlag = nullptr;
 
+inline std::mutex& logMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+inline CoreLogHandler& logHandler() {
+    static CoreLogHandler handler;
+    return handler;
+}
+
+inline void setLogHandler(CoreLogHandler handler) {
+    std::lock_guard<std::mutex> lock(logMutex());
+    logHandler() = std::move(handler);
+}
+
+inline void publishLog(CoreLogLevel level, const std::string& message) {
+    CoreLogHandler handlerCopy;
+    {
+        std::lock_guard<std::mutex> lock(logMutex());
+        handlerCopy = logHandler();
+    }
+
+    if (handlerCopy) {
+        handlerCopy(level, message);
+        return;
+    }
+
+    std::ostream& stream = (level == CoreLogLevel::Warning) ? std::cerr : std::clog;
+    stream << message << '\n';
+}
+
 class LogLine {
 public:
-    explicit LogLine(std::ostream& stream)
-        : m_stream(stream) {}
+    explicit LogLine(CoreLogLevel level)
+        : m_level(level) {}
 
     LogLine(const LogLine&) = delete;
     LogLine& operator=(const LogLine&) = delete;
 
     ~LogLine() {
-        m_stream << '\n';
+        publishLog(m_level, m_stream.str());
     }
 
     template <typename T>
@@ -52,16 +92,17 @@ public:
     }
 
 private:
-    std::ostream& m_stream;
+    CoreLogLevel m_level;
+    std::ostringstream m_stream;
     bool m_firstValue = true;
 };
 
 inline LogLine logWarning() {
-    return LogLine(std::cerr);
+    return LogLine(CoreLogLevel::Warning);
 }
 
 inline LogLine logDebug() {
-    return LogLine(std::clog);
+    return LogLine(CoreLogLevel::Debug);
 }
 }
 
@@ -140,6 +181,7 @@ auto bind_placeholders(R (Class::*taskFunction)(Args...) const, Class* taskObj, 
  */
 class Core {
 public:
+    using LogHandler = CoreLogHandler;
     using StartedCallback = std::function<void(const StartedEvent&)>;
     using FinishedCallback = std::function<void(const FinishedEvent&)>;
     using TerminatedCallback = std::function<void(const TerminatedEvent&)>;
@@ -148,6 +190,9 @@ public:
 
     Core();
     ~Core();
+
+    static void setLogHandler(LogHandler handler);
+    static void clearLogHandler();
 
     void onStarted(StartedCallback callback);
     void onFinished(FinishedCallback callback);
@@ -291,6 +336,14 @@ private:
 // Core Implementation
 inline Core::Core()
     : m_ownerThreadId(std::this_thread::get_id()) {}
+
+inline void Core::setLogHandler(LogHandler handler) {
+    core_detail::setLogHandler(std::move(handler));
+}
+
+inline void Core::clearLogHandler() {
+    core_detail::setLogHandler({});
+}
 
 inline void Core::onStarted(StartedCallback callback) {
     m_startedCallback = std::move(callback);
