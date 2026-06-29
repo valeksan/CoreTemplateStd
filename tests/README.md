@@ -11,5 +11,5 @@
 ```bash
 cmake -S .. -B ../build/std_only_tests -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=OFF
 cmake --build ../build/std_only_tests --target CoreTemplateTests
-ctest --test-dir ../build/std_only_tests/tests --output-on-failure
+ctest --test-dir ../build/std_only_tests --output-on-failure
 ```

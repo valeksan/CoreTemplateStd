@@ -171,7 +171,7 @@ Tasks `1` and `2` share group `1`, so they run sequentially. Task `3` belongs to
 ```bash
 cmake -S . -B build/std_only_check -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=ON
 cmake --build build/std_only_check
-ctest --test-dir build/std_only_check/tests --output-on-failure
+ctest --test-dir build/std_only_check --output-on-failure
 ./build/std_only_check/example/ExampleConsoleApp
 ```
 

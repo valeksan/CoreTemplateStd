@@ -47,7 +47,7 @@ cd CoreTemplate
 ```bash
 cmake -S . -B build/dev -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=ON
 cmake --build build/dev
-ctest --test-dir build/dev/tests --output-on-failure
+ctest --test-dir build/dev --output-on-failure
 ./build/dev/example/ExampleConsoleApp
 ```
 

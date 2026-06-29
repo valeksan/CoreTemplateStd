@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.16)
 
 project(CoreTemplateTests LANGUAGES CXX)
 
-enable_testing()
-
 add_executable(CoreTemplateTests
     core_tests.cpp
     ../core.h
