@@ -18,7 +18,7 @@ target_sources(CoreTemplate INTERFACE
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplate/core.h>
 )
 
-option(CORETEMPLATE_BUILD_EXAMPLE "Build the example application" OFF)
+option(CORETEMPLATE_BUILD_EXAMPLE "Build the example application" ON)
 option(CORETEMPLATE_BUILD_TESTS "Build the test suite" OFF)
 
 if(CORETEMPLATE_BUILD_EXAMPLE)
