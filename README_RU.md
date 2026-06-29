@@ -1,8 +1,8 @@
-# CoreTemplate
+# CoreTemplateStd
 
 Современная header-only библиотека на C++17 для запуска зарегистрированных задач в отдельных потоках, с группировкой, кооперативной отменой, таймаутами остановки и небольшим callback/event API.
 
-[![Build Status](https://github.com/valeksan/CoreTemplate/actions/workflows/ci.yml/badge.svg)](https://github.com/valeksan/CoreTemplate/actions)
+[![Build Status](https://github.com/valeksan/CoreTemplateStd/actions/workflows/ci.yml/badge.svg)](https://github.com/valeksan/CoreTemplateStd/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/language-C++17-blue.svg)](https://en.cppreference.com/w/cpp/17)
 
@@ -20,12 +20,12 @@
 
 ## Начало работы
 
-CoreTemplate требует компилятор с поддержкой C++17. Для сборки и использования core target пакет Qt не нужен.
+CoreTemplateStd требует компилятор с поддержкой C++17. Для сборки и использования core target пакет Qt не нужен.
 
 Можно скопировать `core.h` в проект или подключить репозиторий через CMake:
 
 ```cmake
-add_subdirectory(CoreTemplate)
+add_subdirectory(CoreTemplateStd)
 target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
 ```
 

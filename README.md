@@ -1,8 +1,8 @@
-# CoreTemplate
+# CoreTemplateStd
 
 A modern, header-only C++17 library for running registered tasks in separate threads, with grouping, cooperative cancellation, stop timeouts, and a small callback/event API.
 
-[![Build Status](https://github.com/valeksan/CoreTemplate/actions/workflows/ci.yml/badge.svg)](https://github.com/valeksan/CoreTemplate/actions)
+[![Build Status](https://github.com/valeksan/CoreTemplateStd/actions/workflows/ci.yml/badge.svg)](https://github.com/valeksan/CoreTemplateStd/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/language-C++17-blue.svg)](https://en.cppreference.com/w/cpp/17)
 
@@ -20,12 +20,12 @@ A modern, header-only C++17 library for running registered tasks in separate thr
 
 ## Getting Started
 
-CoreTemplate requires a C++17 compiler. No Qt package is required to build or consume the core target.
+CoreTemplateStd requires a C++17 compiler. No Qt package is required to build or consume the core target.
 
 Copy `core.h` into your project, or use CMake from this repository:
 
 ```cmake
-add_subdirectory(CoreTemplate)
+add_subdirectory(CoreTemplateStd)
 target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
 ```
 
