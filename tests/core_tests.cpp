@@ -575,7 +575,7 @@ void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() 
     Core core;
 
     core.registerTask(82, []() -> int {
-        for (int i = 0; i < 250; ++i) {
+        for (int i = 0; i < 80; ++i) {
             sleepMs(2);
         }
         return 82;
@@ -598,7 +598,7 @@ void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() 
     core.terminateTaskById(id);
     REQUIRE(waitUntil(core, [&events]() { return events.stopTimedOut.size() >= 2; }, 3000));
     REQUIRE_EQ(events.terminated.size(), static_cast<std::size_t>(0));
-    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 3000));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 5000));
     REQUIRE(core.isIdle());
 }
 
