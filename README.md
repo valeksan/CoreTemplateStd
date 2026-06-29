@@ -89,8 +89,8 @@ The complete API is defined in `core.h`. The primary methods are:
 - `processEvents`: delivers queued owner-thread events and should be called by the managing thread.
 - `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup`: request cooperative cancellation.
 - `stopTaskById`, `stopTaskByType`, `stopTaskByGroup`, `stopTasks`, `stopAllTasks`, `stopTasksByGroup`: compatibility names for the cancellation API.
-- `terminateTaskById`: requests stop and uses force termination only when explicitly enabled.
-- `setAllowForceTermination`, `allowForceTermination`: control the emergency force-termination path.
+- `terminateTaskById`: requests stop for an active task and reports a timeout if it does not stop cooperatively.
+- `setAllowForceTermination`, `allowForceTermination`: retained compatibility switches; the current `std::thread` backend does not forcibly kill threads.
 - `isTaskRegistered`, `groupByTask`, `isIdle`, `isTaskAddedByType`, `isTaskAddedByGroup`: query task state.
 - `stopTaskFlag`: returns the thread-local stop flag for the currently running task.
 
@@ -121,7 +121,7 @@ Core core;
 core.setAllowForceTermination(true);
 ```
 
-Enable it only in controlled emergency scenarios. Abrupt thread termination can interrupt user code at unsafe points.
+The current `std::thread` backend has no safe standard way to kill a running thread. Enabling force termination keeps the API compatible, but non-cooperative tasks still receive a stop request and then a stop-timeout event if they keep running.
 
 ## Grouping Example
 
@@ -181,7 +181,7 @@ ctest --test-dir build/std_only_check/tests --output-on-failure
 - `TaskArgs` is `std::vector<std::any>`.
 - `TaskResult` is `std::any`; a `void` task produces an empty `std::any`.
 - `std::any_cast<T>` is the caller's responsibility when reading callback payloads.
-- Platform force-termination code exists as an opt-in emergency path.
+- The current backend uses `std::thread`; non-cooperative tasks cannot be forcibly killed by standard C++.
 
 ## Support The Project
 

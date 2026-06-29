@@ -1,10 +1,6 @@
 // core.h
 #ifndef CORE_H
 #define CORE_H
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200112L   // POSIX.1-2001 (includes pthread_kill)
-#endif
-
 // --- Import the headers of the standard library ---
 #include <atomic>
 #include <functional>
@@ -21,14 +17,6 @@
 #include <iostream>
 #include <mutex>
 #include <deque>
-
-// --- Threading/Multiprocessing API Headers ---
-#ifdef Q_OS_WIN
-    #include <windows.h>
-#else
-    #include <pthread.h>
-    #include <signal.h>
-#endif
 
 // --- Using aliases to improve readability ---
 using TaskId = long;
@@ -143,29 +131,6 @@ auto bind_placeholders(R (Class::*taskFunction)(Args...) const, Class* taskObj, 
     return std::bind(taskFunction, taskObj, placeholder<N + 1>()...);
 }
 
-// --- Classes ---
-class TaskHelper final {
-public:
-    using FinishedHandler = std::function<void(TaskResult)>;
-
-    explicit TaskHelper(std::function<TaskResult()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, FinishedHandler finishedHandler);
-
-#ifdef Q_OS_WIN
-    static DWORD WINAPI functionWrapper(void* pTaskHelper);
-#else
-    static void* functionWrapper(void* pTaskHelper);
-    static void cleanupThreadExit(void* pTaskHelper) noexcept;
-#endif
-
-private:
-    std::function<TaskResult()> m_function;
-    FinishedHandler m_finishedHandler;
-    std::atomic_bool* m_pStopFlag = nullptr;
-    std::atomic_bool* m_pThreadExited = nullptr;
-    void execute(); // Method declaration
-    void markThreadExited() noexcept;
-};
-
 /**
  * @brief The Core class manages task execution in separate threads.
  *
@@ -272,12 +237,7 @@ private:
         TaskType m_type;
         TaskGroup m_group;
         TaskArgs m_stdArgs;
-    #ifdef Q_OS_WIN
-        HANDLE m_threadHandle = nullptr;
-        DWORD m_threadId = 0;
-    #else
-        pthread_t m_threadHandle = 0;
-    #endif
+        std::thread m_thread;
         std::atomic_bool m_stopFlag{false};
         std::atomic_bool m_threadExited{false};
         TaskState m_state;
@@ -292,6 +252,7 @@ private:
     void startTask(std::shared_ptr<Task> pTask);
     void startQueuedTask();
     void removeActiveTask(const std::shared_ptr<Task>& pTask);
+    void joinTaskThread(Task& task);
     bool ensureCalledFromOwnerThread(const char* method) const;
     static StartedEvent makeStartedEvent(const Task& task);
     static FinishedEvent makeFinishedEvent(const Task& task, TaskResult result);
@@ -326,68 +287,6 @@ private:
 };
 
 // --- Class method implementations *after* class declarations ---
-
-// TaskHelper Implementation
-inline TaskHelper::TaskHelper(std::function<TaskResult()> function, std::atomic_bool* pStopFlag, std::atomic_bool* pThreadExited, FinishedHandler finishedHandler)
-    : m_function(function), m_finishedHandler(std::move(finishedHandler)), m_pStopFlag(pStopFlag), m_pThreadExited(pThreadExited) {}
-
-inline void TaskHelper::markThreadExited() noexcept {
-    if (m_pThreadExited) {
-        m_pThreadExited->store(true);
-    }
-}
-
-inline void TaskHelper::execute() {
-    core_detail::g_currentStopFlag = m_pStopFlag;
-    TaskResult result;
-    try {
-        result = m_function();
-    } catch (...) {
-        core_detail::g_currentStopFlag = nullptr;
-        markThreadExited();
-        throw;
-    }
-    core_detail::g_currentStopFlag = nullptr;
-    markThreadExited();
-    if (m_finishedHandler) {
-        m_finishedHandler(std::move(result));
-    }
-}
-
-#ifdef Q_OS_WIN
-inline DWORD TaskHelper::functionWrapper(void* pTaskHelper) {
-    TaskHelper *pThisTaskHelper = reinterpret_cast<TaskHelper *>(pTaskHelper);
-    if (pThisTaskHelper) {
-        pThisTaskHelper->execute();
-        delete pThisTaskHelper;
-    }
-    return 0;
-}
-#else
-inline void TaskHelper::cleanupThreadExit(void* pTaskHelper) noexcept {
-    TaskHelper *pThisTaskHelper = reinterpret_cast<TaskHelper *>(pTaskHelper);
-    if (pThisTaskHelper) {
-        pThisTaskHelper->markThreadExited();
-        delete pThisTaskHelper;
-    }
-}
-
-inline void* TaskHelper::functionWrapper(void* pTaskHelper) {
-#if defined(PTHREAD_CANCEL_ENABLE) && defined(PTHREAD_CANCEL_ASYNCHRONOUS)
-    // Terminate path uses pthread_cancel; asynchronous cancellation makes forced stop predictable
-    // for non-cooperative tasks (terminateTaskById), while cooperative stop remains unchanged.
-    pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
-    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr);
-#endif
-    TaskHelper *pThisTaskHelper = reinterpret_cast<TaskHelper *>(pTaskHelper);
-    if (pThisTaskHelper) {
-        pthread_cleanup_push(&TaskHelper::cleanupThreadExit, pThisTaskHelper);
-        pThisTaskHelper->execute();
-        pthread_cleanup_pop(1);
-    }
-    return nullptr;
-}
-#endif
 
 // Core Implementation
 inline Core::Core()
@@ -493,7 +392,9 @@ inline Core::~Core() {
         return;
     }
 
-    // Escalate only for stubborn tasks that ignored cooperative stop and only if force termination is allowed.
+    // std::thread has no safe standard force-termination primitive. If tasks remain
+    // active here, request the same timeout event path and then join before members
+    // are destroyed, so worker lambdas cannot outlive Core internals.
     if (m_allowForceTermination) {
         const auto stubbornTasks = m_activeTaskList;
         for (const auto& pTask : stubbornTasks) {
@@ -501,7 +402,6 @@ inline Core::~Core() {
         }
     } else {
         core_detail::logWarning() << "Core::~Core - force termination disabled. Active tasks may outlive shutdown window.";
-        return;
     }
 
     while (!m_activeTaskList.empty() && elapsedWaitMs() < (kDtorWaitMs * 2)) {
@@ -510,7 +410,13 @@ inline Core::~Core() {
     }
 
     if (!m_activeTaskList.empty()) {
-        core_detail::logWarning() << "Core::~Core - active tasks still present after shutdown timeout:" << m_activeTaskList.size();
+        core_detail::logWarning() << "Core::~Core - joining active tasks after shutdown timeout:" << m_activeTaskList.size();
+        const auto activeTasks = m_activeTaskList;
+        for (const auto& pTask : activeTasks) {
+            pTask->m_stopFlag.store(true);
+            joinTaskThread(*pTask);
+        }
+        processEvents();
     }
 }
 
@@ -1004,7 +910,20 @@ inline std::shared_ptr<Core::Task> Core::activeTaskByGroup(TaskGroup group) {
 }
 
 inline void Core::removeActiveTask(const std::shared_ptr<Task>& pTask) {
+    if (pTask) {
+        joinTaskThread(*pTask);
+    }
     m_activeTaskList.erase(std::remove(m_activeTaskList.begin(), m_activeTaskList.end(), pTask), m_activeTaskList.end());
+}
+
+inline void Core::joinTaskThread(Task& task) {
+    if (!task.m_thread.joinable()) {
+        return;
+    }
+    if (task.m_thread.get_id() == std::this_thread::get_id()) {
+        return;
+    }
+    task.m_thread.join();
 }
 
 inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
@@ -1023,50 +942,9 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
         timeout = taskInfoIt->second.m_stopTimeout;
     }
 
-    // IMPORTANT: do not block the UI thread here.
-    // Request termination first, then confirm termination asynchronously.
-    bool terminationRequested = false;
-
-#ifdef Q_OS_WIN
-    if (pTask->m_threadHandle) {
-        if (WaitForSingleObject(pTask->m_threadHandle, 0) != WAIT_OBJECT_0) {
-            terminationRequested = (TerminateThread(pTask->m_threadHandle, 1) != 0);
-        } else {
-            // Thread already exited, but finishedTask might never be emitted (e.g. forceful exit path).
-            pTask->m_state = TaskState::Terminated;
-            CloseHandle(pTask->m_threadHandle);
-            pTask->m_threadHandle = nullptr;
-            publishTerminated(*pTask);
-            removeActiveTask(pTask);
-            startQueuedTask();
-            return;
-        }
-    } else {
-        return; // no valid handle
-    }
-#else
-    if (pTask->m_threadHandle != 0) {
-        if (!pTask->m_threadExited.load()) {
-            terminationRequested = (pthread_cancel(pTask->m_threadHandle) == 0);
-        } else {
-            // Thread already not alive, but finishedTask might never be emitted (e.g. pthread_exit/cancel path).
-            pTask->m_state = TaskState::Terminated;
-            publishTerminated(*pTask);
-            removeActiveTask(pTask);
-            startQueuedTask();
-            return;
-        }
-    } else {
-        return; // no valid handle
-    }
-#endif
-
-    if (!terminationRequested) {
-        pTask->m_state = TaskState::StopTimedOut;
-        core_detail::logWarning() << "Task" << pTask->m_id << "terminate request was rejected by platform API";
-        publishStopTimedOut(*pTask, timeout);
-        return;
-    }
+    core_detail::logWarning() << "Task" << pTask->m_id
+                              << "force termination is not supported by the std::thread backend;"
+                              << "waiting for cooperative stop";
 
     const auto startedAt = std::chrono::steady_clock::now();
     auto checker = std::make_shared<std::function<void()>>();
@@ -1078,27 +956,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
             return; // already finished/terminated by another path
         }
 
-        bool isAlive = false;
-#ifdef Q_OS_WIN
-        if (pTask->m_threadHandle) {
-            const DWORD waitResult = WaitForSingleObject(pTask->m_threadHandle, 0);
-            isAlive = (waitResult == WAIT_TIMEOUT);
-            if (!isAlive) {
-                CloseHandle(pTask->m_threadHandle);
-                pTask->m_threadHandle = nullptr;
-            }
-        }
-#else
-        if (pTask->m_threadHandle != 0) {
-            isAlive = !pTask->m_threadExited.load();
-        }
-#endif
-
-        if (!isAlive) {
-            pTask->m_state = TaskState::Terminated;
-            publishTerminated(*pTask);
-            removeActiveTask(pTask);
-            startQueuedTask();
+        if (pTask->m_threadExited.load()) {
             return;
         }
 
@@ -1109,7 +967,7 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
         if (elapsedMs >= timeout) {
             pTask->m_state = TaskState::StopTimedOut;
             core_detail::logWarning() << "Task" << pTask->m_id
-                       << "did not stop after terminate request within timeout" << timeout << "ms";
+                       << "did not stop cooperatively within timeout" << timeout << "ms";
             publishStopTimedOut(*pTask, timeout);
             return;
         }
@@ -1175,43 +1033,39 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
     m_activeTaskList.push_back(pTask);
     pTask->m_state = TaskState::Active;
     pTask->m_threadExited.store(false);
-    TaskHelper* pTaskHelper = new TaskHelper(
-        pTask->m_functionBound,
-        &pTask->m_stopFlag,
-        &pTask->m_threadExited,
-        [this, pTask](TaskResult result) {
+
+    try {
+        pTask->m_thread = std::thread([this, pTask]() {
+            core_detail::g_currentStopFlag = &pTask->m_stopFlag;
+            TaskResult result;
+            try {
+                result = pTask->m_functionBound();
+            } catch (const std::exception& e) {
+                core_detail::logWarning() << "Task" << pTask->m_id << "threw exception:" << e.what();
+            } catch (...) {
+                core_detail::logWarning() << "Task" << pTask->m_id << "threw unknown exception";
+            }
+            core_detail::g_currentStopFlag = nullptr;
+            pTask->m_threadExited.store(true);
+
             postToOwner([this, pTask, result = std::move(result)]() mutable {
+                if (pTask->m_state == TaskState::Terminated) {
+                    removeActiveTask(pTask);
+                    startQueuedTask();
+                    return;
+                }
                 pTask->m_state = TaskState::Finished;
                 publishFinished(*pTask, std::move(result));
                 removeActiveTask(pTask);
                 startQueuedTask();
             });
-        }
-    );
-
-#ifdef Q_OS_WIN
-    pTask->m_threadHandle = CreateThread(nullptr, 0, &TaskHelper::functionWrapper, pTaskHelper, 0, &pTask->m_threadId);
-    if (pTask->m_threadHandle == NULL) {
-        core_detail::logWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". GetLastError:" << GetLastError();
+        });
+    } catch (const std::system_error& e) {
+        core_detail::logWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << e.what();
         removeActiveTask(pTask);
         startQueuedTask();
-        delete pTaskHelper;
-        return; // Abort StartTask execution
+        return;
     }
-    // If everything is OK, continue...
-#else
-    // Checking pthread_create
-    int result = pthread_create(&pTask->m_threadHandle, nullptr, &TaskHelper::functionWrapper, pTaskHelper);
-    if (result != 0) {
-        core_detail::logWarning() << "Core::startTask - Failed to create thread for task ID:" << pTask->m_id << ". Error code:" << result;
-        removeActiveTask(pTask);
-        startQueuedTask();
-        delete pTaskHelper;
-        return; // Abort StartTask execution
-    }
-    // If everything is OK, continue...
-    pthread_detach(pTask->m_threadHandle);
-#endif
 
     publishStarted(*pTask);
 }

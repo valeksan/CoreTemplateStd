@@ -98,7 +98,7 @@ public:
     void registerTaskWithNullObjectThrows();
     void destroyingCoreRequestsStopAndWaitsForActiveTask();
     void terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly();
-    void terminateTaskByIdForceStopsNonCooperativeTask();
+    void terminateTaskByIdForceReportsTimeoutForNonCooperativeTask();
 };
 
 void CoreTests::executesRegisteredTaskAndEmitsFinished() {
@@ -575,7 +575,7 @@ void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() 
     Core core;
 
     core.registerTask(82, []() -> int {
-        for (int i = 0; i < 2000; ++i) {
+        for (int i = 0; i < 250; ++i) {
             sleepMs(2);
         }
         return 82;
@@ -596,20 +596,22 @@ void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() 
 
     core.setAllowForceTermination(true);
     core.terminateTaskById(id);
-    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
+    REQUIRE(waitUntil(core, [&events]() { return events.stopTimedOut.size() >= 2; }, 3000));
+    REQUIRE_EQ(events.terminated.size(), static_cast<std::size_t>(0));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 3000));
     REQUIRE(core.isIdle());
 }
 
-void CoreTests::terminateTaskByIdForceStopsNonCooperativeTask() {
+void CoreTests::terminateTaskByIdForceReportsTimeoutForNonCooperativeTask() {
     Core core;
     core.setAllowForceTermination(true);
 
     core.registerTask(81, []() -> int {
-        for (int i = 0; i < 600; ++i) {
+        for (int i = 0; i < 60; ++i) {
             sleepMs(10);
         }
         return 81;
-    }, 81, 200);
+    }, 81, 80);
 
     CoreEventRecorder events;
     events.attach(core);
@@ -622,8 +624,9 @@ void CoreTests::terminateTaskByIdForceStopsNonCooperativeTask() {
     sleepMs(30);
     core.terminateTaskById(id);
 
-    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
-    REQUIRE(events.finished.size() == 0 || events.finished.size() == 1);
+    REQUIRE(waitUntil(core, [&events]() { return events.stopTimedOut.size() == 1; }, 3000));
+    REQUIRE_EQ(events.terminated.size(), static_cast<std::size_t>(0));
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 3000));
     REQUIRE(core.isIdle());
 }
 
@@ -645,7 +648,7 @@ int main()
         {"registerTaskWithNullObjectThrows", [&tests]() { tests.registerTaskWithNullObjectThrows(); }},
         {"destroyingCoreRequestsStopAndWaitsForActiveTask", [&tests]() { tests.destroyingCoreRequestsStopAndWaitsForActiveTask(); }},
         {"terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly", [&tests]() { tests.terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly(); }},
-        {"terminateTaskByIdForceStopsNonCooperativeTask", [&tests]() { tests.terminateTaskByIdForceStopsNonCooperativeTask(); }},
+        {"terminateTaskByIdForceReportsTimeoutForNonCooperativeTask", [&tests]() { tests.terminateTaskByIdForceReportsTimeoutForNonCooperativeTask(); }},
     };
 
     for (const TestCase& testCase : testCases) {

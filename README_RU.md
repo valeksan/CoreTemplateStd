@@ -89,8 +89,8 @@ int main()
 - `processEvents`: доставляет события управляющему потоку; его нужно регулярно вызывать из управляющего потока.
 - `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup`: запрашивают кооперативную отмену.
 - `stopTaskById`, `stopTaskByType`, `stopTaskByGroup`, `stopTasks`, `stopAllTasks`, `stopTasksByGroup`: совместимые имена для cancellation API.
-- `terminateTaskById`: запрашивает остановку и использует force termination только если он явно включён.
-- `setAllowForceTermination`, `allowForceTermination`: управляют аварийным путём принудительного завершения.
+- `terminateTaskById`: запрашивает остановку активной задачи и сообщает timeout, если задача не остановилась кооперативно.
+- `setAllowForceTermination`, `allowForceTermination`: сохранены как совместимые переключатели; текущий `std::thread` backend не убивает потоки принудительно.
 - `isTaskRegistered`, `groupByTask`, `isIdle`, `isTaskAddedByType`, `isTaskAddedByGroup`: запрашивают состояние задач.
 - `stopTaskFlag`: возвращает thread-local флаг остановки для текущей выполняющейся задачи.
 
@@ -121,7 +121,7 @@ Core core;
 core.setAllowForceTermination(true);
 ```
 
-Включайте его только в контролируемых аварийных сценариях. Резкое завершение потока может прервать пользовательский код в небезопасной точке.
+В текущем `std::thread` backend нет безопасного стандартного способа убить выполняющийся поток. Включение force termination сохраняет совместимость API, но non-cooperative задача всё равно получает stop request, а затем stop-timeout event, если продолжает выполняться.
 
 ## Пример группировки
 
@@ -181,7 +181,7 @@ ctest --test-dir build/std_only_check/tests --output-on-failure
 - `TaskArgs` это `std::vector<std::any>`.
 - `TaskResult` это `std::any`; задача с `void` результатом создаёт пустой `std::any`.
 - Чтение payload через `std::any_cast<T>` остаётся ответственностью вызывающего кода.
-- Платформенный force-termination код остаётся opt-in аварийным путём.
+- Текущий backend использует `std::thread`; non-cooperative задачи нельзя принудительно убить средствами стандартного C++.
 
 ## Поддержка проекта
 
