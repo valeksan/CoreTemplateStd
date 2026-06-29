@@ -1,9 +1,8 @@
-# .github/workflows/ci.yml
 name: CI
 
-# Trigger when core/test/workflow files are modified
 on:
   push:
+    branches: [ "main", "master" ]
     paths:
       - 'CMakeLists.txt'
       - 'cmake/**'
@@ -11,8 +10,8 @@ on:
       - 'example/**'
       - 'tests/**'
       - '.github/workflows/ci.yml'
-    branches: [ "main", "master" ]
   pull_request:
+    branches: [ "main", "master" ]
     paths:
       - 'CMakeLists.txt'
       - 'cmake/**'
@@ -20,85 +19,55 @@ on:
       - 'example/**'
       - 'tests/**'
       - '.github/workflows/ci.yml'
-    branches: [ "main", "master" ]
 
 jobs:
   build:
-    # Run on Linux, macOS and Windows
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        # Define Qt architecture for each OS
-        include:
-          - os: ubuntu-latest
-            qt_host: 'linux'
-            qt_arch: 'linux_gcc_64'        # For Linux
-          - os: macos-latest
-            qt_host: 'mac'
-            qt_arch: 'clang_64'            # For macOS
-          - os: windows-latest
-            qt_host: 'windows'
-            qt_arch: 'win64_mingw'         # For Windows (MinGW)
 
     runs-on: ${{ matrix.os }}
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Install Qt
-      uses: jurplel/install-qt-action@v3
-      with:
-        version: '6.10.2'
-        host: ${{ matrix.qt_host }}
-        target: 'desktop'
-        arch: ${{ matrix.qt_arch }}
-        modules: ''
-        tools: ''
+      - name: Configure
+        run: >
+          cmake -S . -B build/ci
+          -DCMAKE_BUILD_TYPE=Release
+          -DCORETEMPLATE_BUILD_TESTS=ON
+          -DCORETEMPLATE_BUILD_EXAMPLE=ON
 
-    # Install CMake and Ninja
-    - name: Install CMake and Ninja (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build
+      - name: Build
+        run: cmake --build build/ci --config Release
 
-    - name: Install CMake and Ninja (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew install cmake ninja
+      - name: Run tests
+        run: ctest --test-dir build/ci --build-config Release --output-on-failure
 
-    - name: Install Ninja (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        choco install ninja -y
+      - name: Run console example
+        run: ./build/ci/example/ExampleConsoleApp
+        if: runner.os != 'Windows'
 
-    # Build the example
-    - name: Build Example App
-      run: |
-        cmake -S example -B example/build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
-        cmake --build example/build
+      - name: Run console example on Windows
+        run: .\build\ci\example\Release\ExampleConsoleApp.exe
+        if: runner.os == 'Windows'
 
-    - name: Build Tests
-      run: |
-        cmake -S tests -B tests/build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
-        cmake --build tests/build
+      - name: Install package
+        run: >
+          cmake --install build/ci
+          --config Release
+          --prefix build/install
 
-    - name: Run Tests
-      run: |
-        ctest --test-dir tests/build --output-on-failure
+      - name: Configure package smoke consumer
+        run: >
+          cmake -S tests/package_smoke -B build/package_smoke
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH=${{ github.workspace }}/build/install
 
-    - name: Install CoreTemplate Package
-      run: |
-        cmake -S . -B build/package -G "Ninja" -DCMAKE_BUILD_TYPE=Release
-        cmake --build build/package
-        cmake --install build/package --prefix build/install
+      - name: Build package smoke consumer
+        run: cmake --build build/package_smoke --config Release
 
-    - name: Build Package Smoke Consumer
-      run: |
-        cmake -S tests/package_smoke -B tests/package_smoke/build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${{ github.workspace }}/build/install"
-        cmake --build tests/package_smoke/build
-
-    - name: Run Package Smoke Consumer
-      run: |
-        ctest --test-dir tests/package_smoke/build --output-on-failure
+      - name: Run package smoke consumer
+        run: ctest --test-dir build/package_smoke --build-config Release --output-on-failure
