@@ -71,3 +71,27 @@ jobs:
 
       - name: Run package smoke consumer
         run: ctest --test-dir build/package_smoke --build-config Release --output-on-failure
+
+  sanitizers:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure sanitizer build
+        run: >
+          cmake -S . -B build/sanitizers
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCORETEMPLATE_BUILD_TESTS=ON
+          -DCORETEMPLATE_BUILD_EXAMPLE=ON
+          -DCORETEMPLATE_ENABLE_SANITIZERS=ON
+
+      - name: Build sanitizer targets
+        run: cmake --build build/sanitizers
+
+      - name: Run sanitizer tests
+        run: ctest --test-dir build/sanitizers --output-on-failure
+
+      - name: Run sanitizer console example
+        run: ./build/sanitizers/example/ExampleConsoleApp

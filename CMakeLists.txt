@@ -22,6 +22,22 @@ target_sources(CoreTemplateStd INTERFACE
 
 option(CORETEMPLATE_BUILD_EXAMPLE "Build the example application" ON)
 option(CORETEMPLATE_BUILD_TESTS "Build the test suite" OFF)
+option(CORETEMPLATE_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer for local test and example targets" OFF)
+
+if(CORETEMPLATE_ENABLE_SANITIZERS)
+    if(MSVC)
+        message(WARNING "CORETEMPLATE_ENABLE_SANITIZERS is not configured for MSVC")
+    else()
+        add_library(CoreTemplateStdSanitizers INTERFACE)
+        target_compile_options(CoreTemplateStdSanitizers INTERFACE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+        target_link_options(CoreTemplateStdSanitizers INTERFACE
+            -fsanitize=address,undefined
+        )
+    endif()
+endif()
 
 if(CORETEMPLATE_BUILD_EXAMPLE)
     add_subdirectory(example)

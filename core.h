@@ -311,6 +311,7 @@ private:
     void publishStopTimedOut(const Task& task, TaskStopTimeout timeout);
     void postToOwner(std::function<void()> event);
     void scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event);
+    void clearOwnerEvents();
 
     template <typename... Args>
     void insertToTaskHash(TaskType taskType, std::function<TaskResult(Args...)> taskFunction, TaskGroup taskGroup = 0, TaskStopTimeout taskStopTimeout = kDefaultStopTimeout);
@@ -404,6 +405,7 @@ inline Core::~Core() {
         for (const auto& pTask : std::as_const(m_activeTaskList)) {
             pTask->m_stopFlag.store(true);
         }
+        clearOwnerEvents();
         return;
     }
 
@@ -414,6 +416,7 @@ inline Core::~Core() {
     m_queuedTaskList.clear();
 
     if (m_activeTaskList.empty()) {
+        clearOwnerEvents();
         return;
     }
 
@@ -442,6 +445,7 @@ inline Core::~Core() {
     }
 
     if (m_activeTaskList.empty()) {
+        clearOwnerEvents();
         return;
     }
 
@@ -471,6 +475,8 @@ inline Core::~Core() {
         }
         processEvents();
     }
+
+    clearOwnerEvents();
 }
 
 inline bool Core::ensureCalledFromOwnerThread(const char* method) const {
@@ -497,6 +503,12 @@ inline void Core::scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<vo
             std::move(event)
         });
     }
+}
+
+inline void Core::clearOwnerEvents() {
+    std::lock_guard<std::mutex> lock(m_eventMutex);
+    m_eventQueue.clear();
+    m_scheduledEvents.clear();
 }
 
 inline StartedEvent Core::makeStartedEvent(const Task& task) {
@@ -806,15 +818,18 @@ inline void Core::stopTasks() {
 
     m_blockStartTask.store(true);
     auto resumeWhenIdle = std::make_shared<std::function<void()>>();
-    *resumeWhenIdle = [this, maxTimeout, resumeWhenIdle]() {
+    std::weak_ptr<std::function<void()>> weakResumeWhenIdle = resumeWhenIdle;
+    *resumeWhenIdle = [this, maxTimeout, weakResumeWhenIdle]() {
         if (isIdle()) {
             m_blockStartTask.store(false);
             startQueuedTask();
             return;
         }
-        scheduleOnOwnerAfter(maxTimeout, [resumeWhenIdle]() {
-            (*resumeWhenIdle)();
-        });
+        if (auto resumeWhenIdle = weakResumeWhenIdle.lock()) {
+            scheduleOnOwnerAfter(maxTimeout, [resumeWhenIdle]() {
+                (*resumeWhenIdle)();
+            });
+        }
     };
 
     scheduleOnOwnerAfter(maxTimeout, [resumeWhenIdle]() {
@@ -1001,8 +1016,9 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
 
     const auto startedAt = std::chrono::steady_clock::now();
     auto checker = std::make_shared<std::function<void()>>();
+    std::weak_ptr<std::function<void()>> weakChecker = checker;
 
-    *checker = [this, pTask, timeout, startedAt, checker]() {
+    *checker = [this, pTask, timeout, startedAt, weakChecker]() {
         if (pTask->m_state == TaskState::Inactive
             || pTask->m_state == TaskState::Finished
             || pTask->m_state == TaskState::Terminated) {
@@ -1025,9 +1041,11 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
             return;
         }
 
-        scheduleOnOwnerAfter(20, [checker]() {
-            (*checker)();
-        });
+        if (auto checker = weakChecker.lock()) {
+            scheduleOnOwnerAfter(20, [checker]() {
+                (*checker)();
+            });
+        }
     };
 
     scheduleOnOwnerAfter(0, [checker]() {

@@ -61,6 +61,15 @@ cmake --build build/package_smoke
 ctest --test-dir build/package_smoke --output-on-failure
 ```
 
+### Sanitizer Check
+
+```bash
+cmake -S . -B build/sanitizers -DCMAKE_BUILD_TYPE=Debug -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=ON -DCORETEMPLATE_ENABLE_SANITIZERS=ON
+cmake --build build/sanitizers
+ctest --test-dir build/sanitizers --output-on-failure
+./build/sanitizers/example/ExampleConsoleApp
+```
+
 ## Pull Request Guidelines
 
 - **One PR, one topic:** keep unrelated changes separate.
