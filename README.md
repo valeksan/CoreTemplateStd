@@ -26,7 +26,7 @@ Copy `core.h` into your project, or use CMake from this repository:
 
 ```cmake
 add_subdirectory(CoreTemplateStd)
-target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
+target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
 ```
 
 Install and consume via `find_package`:
@@ -36,6 +36,13 @@ cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/your/prefix
 cmake --build build
 cmake --install build
 ```
+
+```cmake
+find_package(CoreTemplateStd REQUIRED)
+target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
+```
+
+The old CMake package name remains available as a compatibility layer:
 
 ```cmake
 find_package(CoreTemplate REQUIRED)

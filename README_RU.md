@@ -26,7 +26,7 @@ CoreTemplateStd требует компилятор с поддержкой C++1
 
 ```cmake
 add_subdirectory(CoreTemplateStd)
-target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
+target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
 ```
 
 Установка и подключение через `find_package`:
@@ -36,6 +36,13 @@ cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/your/prefix
 cmake --build build
 cmake --install build
 ```
+
+```cmake
+find_package(CoreTemplateStd REQUIRED)
+target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
+```
+
+Старое имя CMake package остаётся доступным как слой совместимости:
 
 ```cmake
 find_package(CoreTemplate REQUIRED)

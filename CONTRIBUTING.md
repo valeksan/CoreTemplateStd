@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD033 -->
 
-# Contributing to CoreTemplate
+# Contributing to CoreTemplateStd
 
 <div align="center">
 
@@ -12,7 +12,7 @@
 </div>
 
 <div align="center">
-  <sub>Thank you for considering contributing to CoreTemplate!</sub>
+  <sub>Thank you for considering contributing to CoreTemplateStd!</sub>
 </div>
 
 <br />
@@ -38,8 +38,8 @@ Qt is not required for the core library, tests, or current console example.
 ### Clone
 
 ```bash
-git clone https://github.com/valeksan/CoreTemplate.git
-cd CoreTemplate
+git clone https://github.com/valeksan/CoreTemplateStd.git
+cd CoreTemplateStd
 ```
 
 ### Build and Test
@@ -85,11 +85,11 @@ ctest --test-dir build/package_smoke --output-on-failure
 If something is unclear, open an issue or discussion in the repository.
 
 <!-- MARKDOWN LINKS -->
-[contributors-shield]: https://img.shields.io/github/contributors/valeksan/CoreTemplate.svg?style=for-the-badge
-[contributors-url]: https://github.com/valeksan/CoreTemplate/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/valeksan/CoreTemplate.svg?style=for-the-badge
-[forks-url]: https://github.com/valeksan/CoreTemplate/network/members
-[stars-shield]: https://img.shields.io/github/stars/valeksan/CoreTemplate.svg?style=for-the-badge
-[stars-url]: https://github.com/valeksan/CoreTemplate/stargazers
-[issues-shield]: https://img.shields.io/github/issues/valeksan/CoreTemplate.svg?style=for-the-badge
-[issues-url]: https://github.com/valeksan/CoreTemplate/issues
+[contributors-shield]: https://img.shields.io/github/contributors/valeksan/CoreTemplateStd.svg?style=for-the-badge
+[contributors-url]: https://github.com/valeksan/CoreTemplateStd/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/valeksan/CoreTemplateStd.svg?style=for-the-badge
+[forks-url]: https://github.com/valeksan/CoreTemplateStd/network/members
+[stars-shield]: https://img.shields.io/github/stars/valeksan/CoreTemplateStd.svg?style=for-the-badge
+[stars-url]: https://github.com/valeksan/CoreTemplateStd/stargazers
+[issues-shield]: https://img.shields.io/github/issues/valeksan/CoreTemplateStd.svg?style=for-the-badge
+[issues-url]: https://github.com/valeksan/CoreTemplateStd/issues

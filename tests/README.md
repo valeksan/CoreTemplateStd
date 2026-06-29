@@ -1,10 +1,10 @@
-# CoreTemplate Tests
+# CoreTemplateStd Tests
 
 ## Structure
 
 - `core_tests.cpp` - std-only test executable for the `Core` API.
 - `CMakeLists.txt` - CMake build file.
-- `package_smoke/` - installed-package smoke test using `find_package(CoreTemplate)`.
+- `package_smoke/` - installed-package smoke test using `find_package(CoreTemplateStd)` and the compatibility `find_package(CoreTemplate)`.
 
 ## Run with CMake
 

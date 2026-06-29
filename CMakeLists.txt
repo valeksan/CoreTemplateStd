@@ -1,21 +1,22 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(CoreTemplate VERSION 0.1.0 LANGUAGES CXX)
+project(CoreTemplateStd VERSION 0.1.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-add_library(CoreTemplate INTERFACE)
-add_library(CoreTemplate::CoreTemplate ALIAS CoreTemplate)
+add_library(CoreTemplateStd INTERFACE)
+add_library(CoreTemplateStd::CoreTemplateStd ALIAS CoreTemplateStd)
+add_library(CoreTemplate::CoreTemplate ALIAS CoreTemplateStd)
 
-target_compile_features(CoreTemplate INTERFACE cxx_std_17)
-target_include_directories(CoreTemplate INTERFACE
+target_compile_features(CoreTemplateStd INTERFACE cxx_std_17)
+target_include_directories(CoreTemplateStd INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplate>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplateStd>
 )
-target_sources(CoreTemplate INTERFACE
+target_sources(CoreTemplateStd INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/core.h>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplate/core.h>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplateStd/core.h>
 )
 
 option(CORETEMPLATE_BUILD_EXAMPLE "Build the example application" ON)
@@ -31,17 +32,35 @@ if(CORETEMPLATE_BUILD_TESTS)
 endif()
 
 install(FILES core.h
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplate
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplateStd
 )
 
-install(TARGETS CoreTemplate
-    EXPORT CoreTemplateTargets
+install(TARGETS CoreTemplateStd
+    EXPORT CoreTemplateStdTargets
 )
 
-install(EXPORT CoreTemplateTargets
-    FILE CoreTemplateTargets.cmake
-    NAMESPACE CoreTemplate::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CoreTemplate
+install(EXPORT CoreTemplateStdTargets
+    FILE CoreTemplateStdTargets.cmake
+    NAMESPACE CoreTemplateStd::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CoreTemplateStd
+)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/CoreTemplateStdConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CoreTemplateStdConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/CoreTemplateStdConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CoreTemplateStd
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/CoreTemplateStdConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/CoreTemplateStdConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CoreTemplateStd
 )
 
 write_basic_package_version_file(

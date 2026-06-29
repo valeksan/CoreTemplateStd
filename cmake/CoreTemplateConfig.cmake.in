@@ -1,5 +1,12 @@
 @PACKAGE_INIT@
 
-include("${CMAKE_CURRENT_LIST_DIR}/CoreTemplateTargets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../CoreTemplateStd/CoreTemplateStdTargets.cmake")
+
+if(NOT TARGET CoreTemplate::CoreTemplate)
+    add_library(CoreTemplate::CoreTemplate INTERFACE IMPORTED)
+    set_target_properties(CoreTemplate::CoreTemplate PROPERTIES
+        INTERFACE_LINK_LIBRARIES CoreTemplateStd::CoreTemplateStd
+    )
+endif()
 
 check_required_components(CoreTemplate)
