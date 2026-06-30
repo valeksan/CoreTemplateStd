@@ -89,12 +89,12 @@ MainWindow::MainWindow(QWidget* parent)
     , ui(new Ui::MainWindow)
     , m_adapter(this)
     , m_visibleKinds({
-          LogKind::Started,
-          LogKind::Finished,
-          LogKind::StopRequested,
-          LogKind::StopTimedOut,
-          LogKind::Terminated,
-          LogKind::Info
+          static_cast<int>(LogKind::Started),
+          static_cast<int>(LogKind::Finished),
+          static_cast<int>(LogKind::StopRequested),
+          static_cast<int>(LogKind::StopTimedOut),
+          static_cast<int>(LogKind::Terminated),
+          static_cast<int>(LogKind::Info)
       })
 {
     ui->setupUi(this);
@@ -150,9 +150,9 @@ void MainWindow::setupLogFilter()
         action->setChecked(true);
         connect(action, &QAction::toggled, this, [this, kind](bool checked) {
             if (checked) {
-                m_visibleKinds.insert(kind);
+                m_visibleKinds.insert(static_cast<int>(kind));
             } else {
-                m_visibleKinds.remove(kind);
+                m_visibleKinds.remove(static_cast<int>(kind));
             }
             rebuildLog();
         });
@@ -395,7 +395,7 @@ void MainWindow::addInitialTasks()
 void MainWindow::addLog(LogKind kind, const QString& text)
 {
     m_logEntries.append(LogEntry{kind, text});
-    if (!m_visibleKinds.contains(kind)) {
+    if (!m_visibleKinds.contains(static_cast<int>(kind))) {
         return;
     }
 
@@ -408,7 +408,7 @@ void MainWindow::rebuildLog()
 {
     ui->textEdit->clear();
     for (const auto& entry : m_logEntries) {
-        if (m_visibleKinds.contains(entry.kind)) {
+        if (m_visibleKinds.contains(static_cast<int>(entry.kind))) {
             const QString html = QString("<span style=\"color:%1;\"><b>[%2]</b> %3</span>")
                                      .arg(logColor(entry.kind), logTag(entry.kind), entry.text.toHtmlEscaped());
             ui->textEdit->append(html);

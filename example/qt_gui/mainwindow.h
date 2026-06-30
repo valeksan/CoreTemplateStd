@@ -69,7 +69,7 @@ private:
     CoreQtAdapter m_adapter;
     Calculator m_calculator;
     QVector<LogEntry> m_logEntries;
-    QSet<LogKind> m_visibleKinds;
+    QSet<int> m_visibleKinds;
 };
 
 #endif // EXAMPLE_QT_GUI_MAINWINDOW_H
