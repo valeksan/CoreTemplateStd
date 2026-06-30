@@ -74,7 +74,7 @@ ctest --test-dir build/sanitizers --output-on-failure
 ### Optional Qt Adapter Check
 
 ```bash
-cmake -S . -B build/qt_adapter -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=OFF -DCORETEMPLATE_BUILD_QT_ADAPTER=ON
+cmake -S . -B build/qt_adapter -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=OFF -DCORETEMPLATE_BUILD_QT_ADAPTER=ON -DCORETEMPLATE_BUILD_QT_GUI_EXAMPLE=ON
 cmake --build build/qt_adapter
 ctest --test-dir build/qt_adapter --output-on-failure
 ```
@@ -97,8 +97,8 @@ ctest --test-dir build/release_package_smoke --output-on-failure
 Release tags use the `vMAJOR.MINOR.PATCH` format:
 
 ```bash
-git tag -a v0.2.0 -F docs/releases/v0.2.0.md
-git push std_origin v0.2.0
+git tag -a v0.3.0 -F docs/releases/v0.3.0.md
+git push std_origin v0.3.0
 ```
 
 ## Pull Request Guidelines

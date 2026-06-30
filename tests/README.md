@@ -15,10 +15,10 @@ cmake --build ../build/std_only_tests --target CoreTemplateTests
 ctest --test-dir ../build/std_only_tests --output-on-failure
 ```
 
-Optional Qt adapter smoke test:
+Optional Qt adapter and GUI example build:
 
 ```bash
-cmake -S .. -B ../build/qt_adapter_tests -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=OFF -DCORETEMPLATE_BUILD_QT_ADAPTER=ON
+cmake -S .. -B ../build/qt_adapter_tests -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=OFF -DCORETEMPLATE_BUILD_QT_ADAPTER=ON -DCORETEMPLATE_BUILD_QT_GUI_EXAMPLE=ON
 cmake --build ../build/qt_adapter_tests
 ctest --test-dir ../build/qt_adapter_tests --output-on-failure
 ```

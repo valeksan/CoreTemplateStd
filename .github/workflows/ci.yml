@@ -117,6 +117,7 @@ jobs:
           -DCORETEMPLATE_BUILD_TESTS=ON
           -DCORETEMPLATE_BUILD_EXAMPLE=OFF
           -DCORETEMPLATE_BUILD_QT_ADAPTER=ON
+          -DCORETEMPLATE_BUILD_QT_GUI_EXAMPLE=ON
 
       - name: Build Qt adapter targets
         run: cmake --build build/qt_adapter --config Release

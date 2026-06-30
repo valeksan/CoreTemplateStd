@@ -39,7 +39,7 @@ include(FetchContent)
 FetchContent_Declare(
     CoreTemplateStd
     GIT_REPOSITORY https://github.com/valeksan/CoreTemplateStd.git
-    GIT_TAG v0.2.0
+    GIT_TAG v0.3.0
 )
 
 FetchContent_MakeAvailable(CoreTemplateStd)
@@ -87,6 +87,15 @@ target_link_libraries(your_qt_target PRIVATE
 ```
 
 `CoreQtAdapter` owns a std-only `Core`, exposes it through `core()`, and re-emits core callbacks as Qt signals with `QVariantList`/`QVariant` payloads. The adapter supports common scalar and string payload conversions; unsupported `std::any` payloads become invalid `QVariant` values.
+
+The Qt Widgets GUI example is also optional:
+
+```cmake
+cmake -S . -B build/qt_gui \
+  -DCORETEMPLATE_BUILD_EXAMPLE=OFF \
+  -DCORETEMPLATE_BUILD_QT_GUI_EXAMPLE=ON
+cmake --build build/qt_gui --target ExampleQtGuiApp
+```
 
 ## Migrating From Qt CoreTemplate
 

@@ -2,6 +2,17 @@
 
 All notable changes to CoreTemplateStd are documented in this file.
 
+## [0.3.0] - 2026-06-30
+
+### Added
+
+- Optional Qt Widgets GUI example `ExampleQtGuiApp`.
+- `CORETEMPLATE_BUILD_QT_GUI_EXAMPLE` CMake option.
+
+### Notes
+
+- The GUI example uses `CoreTemplateStd::QtAdapter`; `core.h` remains std-only.
+
 ## [0.2.0] - 2026-06-30
 
 ### Added
@@ -44,5 +55,6 @@ Initial std-only release.
 - Installed package consumers can include `#include <CoreTemplateStd/core.h>`.
 - The old `find_package(CoreTemplate)` and `CoreTemplate::CoreTemplate` names remain available as compatibility aliases.
 
+[0.3.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.3.0
 [0.2.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.2.0
 [0.1.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.1.0
