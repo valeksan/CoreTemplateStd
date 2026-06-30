@@ -34,6 +34,7 @@ We welcome bug reports, fixes, documentation improvements, and focused feature p
 - A compatible build system such as Ninja, GNU Make, MSBuild, or an IDE that can open CMake projects.
 
 Qt is not required for the core library, tests, or current console example.
+Qt is required only when `CORETEMPLATE_BUILD_QT_ADAPTER=ON`.
 
 ### Clone
 
@@ -70,6 +71,14 @@ ctest --test-dir build/sanitizers --output-on-failure
 ./build/sanitizers/example/ExampleConsoleApp
 ```
 
+### Optional Qt Adapter Check
+
+```bash
+cmake -S . -B build/qt_adapter -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=OFF -DCORETEMPLATE_BUILD_QT_ADAPTER=ON
+cmake --build build/qt_adapter
+ctest --test-dir build/qt_adapter --output-on-failure
+```
+
 ### Release Checklist
 
 ```bash
@@ -88,8 +97,8 @@ ctest --test-dir build/release_package_smoke --output-on-failure
 Release tags use the `vMAJOR.MINOR.PATCH` format:
 
 ```bash
-git tag -a v0.1.0 -F docs/releases/v0.1.0.md
-git push std_origin v0.1.0
+git tag -a v0.2.0 -F docs/releases/v0.2.0.md
+git push std_origin v0.2.0
 ```
 
 ## Pull Request Guidelines

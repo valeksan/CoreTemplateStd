@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(CoreTemplateStd VERSION 0.1.0 LANGUAGES CXX)
+project(CoreTemplateStd VERSION 0.2.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -22,6 +22,7 @@ target_sources(CoreTemplateStd INTERFACE
 
 option(CORETEMPLATE_BUILD_EXAMPLE "Build the example application" ON)
 option(CORETEMPLATE_BUILD_TESTS "Build the test suite" OFF)
+option(CORETEMPLATE_BUILD_QT_ADAPTER "Build the optional Qt adapter target" OFF)
 option(CORETEMPLATE_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer for local test and example targets" OFF)
 
 if(CORETEMPLATE_ENABLE_SANITIZERS)
@@ -46,6 +47,10 @@ endif()
 if(CORETEMPLATE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(CORETEMPLATE_BUILD_QT_ADAPTER)
+    add_subdirectory(qt_adapter)
 endif()
 
 install(FILES core.h

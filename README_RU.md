@@ -17,6 +17,7 @@
 - **Кооперативная отмена**: задачи могут проверять `stopTaskFlag()` и завершаться аккуратно.
 - **Callback events**: можно подписаться на started, finished, terminated, stop-requested и stop-timeout события.
 - **Настраиваемое логирование**: debug и warning сообщения core можно перенаправить через callback стандартной библиотеки.
+- **Опциональный Qt adapter**: отдельный QObject/signal мост без добавления Qt в `core.h`.
 - **C++17 payloads**: аргументы и результаты задач доступны как `std::vector<std::any>` и `std::any`.
 
 ## Начало работы
@@ -38,7 +39,7 @@ include(FetchContent)
 FetchContent_Declare(
     CoreTemplateStd
     GIT_REPOSITORY https://github.com/valeksan/CoreTemplateStd.git
-    GIT_TAG v0.1.0
+    GIT_TAG v0.2.0
 )
 
 FetchContent_MakeAvailable(CoreTemplateStd)
@@ -71,6 +72,21 @@ target_link_libraries(your_target PRIVATE CoreTemplateStd::CoreTemplateStd)
 find_package(CoreTemplate REQUIRED)
 target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
 ```
+
+## Опциональный Qt adapter
+
+Core target остаётся без Qt. Если Qt-приложению нужна интеграция с signal/slot, включите отдельный adapter target при подключении исходников:
+
+```cmake
+set(CORETEMPLATE_BUILD_QT_ADAPTER ON)
+add_subdirectory(CoreTemplateStd)
+
+target_link_libraries(your_qt_target PRIVATE
+    CoreTemplateStd::QtAdapter
+)
+```
+
+`CoreQtAdapter` владеет std-only объектом `Core`, отдаёт доступ к нему через `core()` и переизлучает callbacks как Qt-сигналы с payload на `QVariantList`/`QVariant`. Adapter конвертирует базовые числовые типы и строки; неподдержанные значения `std::any` становятся invalid `QVariant`.
 
 ## Миграция с Qt CoreTemplate
 

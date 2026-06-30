@@ -17,6 +17,7 @@ A modern, header-only C++17 library for running registered tasks in separate thr
 - **Cooperative cancellation**: tasks can check `stopTaskFlag()` and exit gracefully.
 - **Event callbacks**: observe started, finished, terminated, stop-requested, and stop-timeout events.
 - **Configurable logging**: redirect core debug and warning messages with a standard C++ callback.
+- **Optional Qt adapter**: build a separate QObject/signal bridge without adding Qt to `core.h`.
 - **C++17 payloads**: task arguments and results are exposed as `std::vector<std::any>` and `std::any`.
 
 ## Getting Started
@@ -38,7 +39,7 @@ include(FetchContent)
 FetchContent_Declare(
     CoreTemplateStd
     GIT_REPOSITORY https://github.com/valeksan/CoreTemplateStd.git
-    GIT_TAG v0.1.0
+    GIT_TAG v0.2.0
 )
 
 FetchContent_MakeAvailable(CoreTemplateStd)
@@ -71,6 +72,21 @@ The old CMake package name remains available as a compatibility layer:
 find_package(CoreTemplate REQUIRED)
 target_link_libraries(your_target PRIVATE CoreTemplate::CoreTemplate)
 ```
+
+## Optional Qt Adapter
+
+The core target stays Qt-free. If a Qt application wants signal/slot integration, enable the separate adapter target from the source tree:
+
+```cmake
+set(CORETEMPLATE_BUILD_QT_ADAPTER ON)
+add_subdirectory(CoreTemplateStd)
+
+target_link_libraries(your_qt_target PRIVATE
+    CoreTemplateStd::QtAdapter
+)
+```
+
+`CoreQtAdapter` owns a std-only `Core`, exposes it through `core()`, and re-emits core callbacks as Qt signals with `QVariantList`/`QVariant` payloads. The adapter supports common scalar and string payload conversions; unsupported `std::any` payloads become invalid `QVariant` values.
 
 ## Migrating From Qt CoreTemplate
 

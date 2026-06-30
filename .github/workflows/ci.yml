@@ -8,6 +8,7 @@ on:
       - 'cmake/**'
       - 'core.h'
       - 'example/**'
+      - 'qt_adapter/**'
       - 'tests/**'
       - '.github/workflows/ci.yml'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - 'cmake/**'
       - 'core.h'
       - 'example/**'
+      - 'qt_adapter/**'
       - 'tests/**'
       - '.github/workflows/ci.yml'
 
@@ -95,3 +97,29 @@ jobs:
 
       - name: Run sanitizer console example
         run: ./build/sanitizers/example/ExampleConsoleApp
+
+  qt_adapter:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qtbase5-dev
+
+      - name: Configure Qt adapter build
+        run: >
+          cmake -S . -B build/qt_adapter
+          -DCMAKE_BUILD_TYPE=Release
+          -DCORETEMPLATE_BUILD_TESTS=ON
+          -DCORETEMPLATE_BUILD_EXAMPLE=OFF
+          -DCORETEMPLATE_BUILD_QT_ADAPTER=ON
+
+      - name: Build Qt adapter targets
+        run: cmake --build build/qt_adapter --config Release
+
+      - name: Run Qt adapter tests
+        run: ctest --test-dir build/qt_adapter --build-config Release --output-on-failure
