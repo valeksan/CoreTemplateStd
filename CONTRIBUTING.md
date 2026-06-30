@@ -70,6 +70,28 @@ ctest --test-dir build/sanitizers --output-on-failure
 ./build/sanitizers/example/ExampleConsoleApp
 ```
 
+### Release Checklist
+
+```bash
+cmake -S . -B build/release_check -DCORETEMPLATE_BUILD_TESTS=ON -DCORETEMPLATE_BUILD_EXAMPLE=ON
+cmake --build build/release_check
+ctest --test-dir build/release_check --output-on-failure
+./build/release_check/example/ExampleConsoleApp
+
+cmake -S . -B build/release_install -DCORETEMPLATE_BUILD_TESTS=OFF -DCORETEMPLATE_BUILD_EXAMPLE=OFF -DCMAKE_INSTALL_PREFIX=$PWD/build/release_prefix
+cmake --build build/release_install --target install
+cmake -S tests/package_smoke -B build/release_package_smoke -DCMAKE_PREFIX_PATH=$PWD/build/release_prefix
+cmake --build build/release_package_smoke
+ctest --test-dir build/release_package_smoke --output-on-failure
+```
+
+Release tags use the `vMAJOR.MINOR.PATCH` format:
+
+```bash
+git tag -a v0.1.0 -F docs/releases/v0.1.0.md
+git push std_origin v0.1.0
+```
+
 ## Pull Request Guidelines
 
 - **One PR, one topic:** keep unrelated changes separate.

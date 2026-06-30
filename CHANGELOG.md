@@ -1,0 +1,34 @@
+# Changelog
+
+All notable changes to CoreTemplateStd are documented in this file.
+
+## [0.1.0] - 2026-06-30
+
+Initial std-only release.
+
+### Added
+
+- Header-only C++17 `CoreTemplateStd` interface target.
+- `CoreTemplateStd::CoreTemplateStd` CMake target and compatibility `CoreTemplate::CoreTemplate` alias.
+- Std-only task execution with `std::thread`.
+- Callback/event API for started, finished, terminated, stop-requested, and stop-timeout events.
+- `std::any`/`std::vector<std::any>` task result and argument payloads.
+- Cooperative cancellation and stop timeout reporting.
+- Configurable std-only log handler.
+- Console example application.
+- Std-only test suite, package smoke tests, and CI sanitizer checks.
+
+### Changed
+
+- Core no longer depends on Qt libraries.
+- Qt signals are replaced by explicit callback setters.
+- Qt event-loop delivery is replaced by explicit `Core::processEvents()` calls.
+- Force termination is kept as a compatibility switch, but the `std::thread` backend does not kill running threads.
+
+### Migration Notes
+
+- Prefer `find_package(CoreTemplateStd)` and `CoreTemplateStd::CoreTemplateStd` in new CMake consumers.
+- Installed package consumers can include `#include <CoreTemplateStd/core.h>`.
+- The old `find_package(CoreTemplate)` and `CoreTemplate::CoreTemplate` names remain available as compatibility aliases.
+
+[0.1.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.1.0

@@ -38,7 +38,7 @@ include(FetchContent)
 FetchContent_Declare(
     CoreTemplateStd
     GIT_REPOSITORY https://github.com/valeksan/CoreTemplateStd.git
-    GIT_TAG main
+    GIT_TAG v0.1.0
 )
 
 FetchContent_MakeAvailable(CoreTemplateStd)
