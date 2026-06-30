@@ -32,7 +32,6 @@ int main(int argc, char** argv)
 
     const auto startedAt = std::chrono::steady_clock::now();
     while (!finished) {
-        adapter.processEvents();
         QCoreApplication::processEvents();
         if (std::chrono::steady_clock::now() - startedAt > std::chrono::seconds(2)) {
             std::cerr << "Qt adapter smoke timed out\n";

@@ -2,6 +2,17 @@
 
 All notable changes to CoreTemplateStd are documented in this file.
 
+## [0.4.0] - 2026-06-30
+
+### Added
+
+- `Core::setWakeCallback` and `Core::clearWakeCallback` for event-loop integrations.
+
+### Changed
+
+- `CoreQtAdapter` now uses the wake callback with queued Qt delivery and one-shot timers.
+- `ExampleQtGuiApp` no longer uses a polling `QTimer` to call `processEvents()`.
+
 ## [0.3.0] - 2026-06-30
 
 ### Added
@@ -55,6 +66,7 @@ Initial std-only release.
 - Installed package consumers can include `#include <CoreTemplateStd/core.h>`.
 - The old `find_package(CoreTemplate)` and `CoreTemplate::CoreTemplate` names remain available as compatibility aliases.
 
+[0.4.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.4.0
 [0.3.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.3.0
 [0.2.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.2.0
 [0.1.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.1.0

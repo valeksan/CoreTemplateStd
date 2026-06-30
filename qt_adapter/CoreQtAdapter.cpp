@@ -1,8 +1,11 @@
 #include "CoreQtAdapter.h"
 
+#include <QMetaObject>
 #include <QString>
+#include <QTimer>
 
 #include <any>
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -20,6 +23,10 @@ QVariant anyToVariant(const TaskResult& value) {
 CoreQtAdapter::CoreQtAdapter(QObject* parent)
     : QObject(parent)
 {
+    m_core.setWakeCallback([this](TaskStopTimeout delayMs) {
+        wakeCore(delayMs);
+    });
+
     m_core.onStarted([this](const StartedEvent& event) {
         emit startedTask(event.id, event.type, toVariantList(event.args));
     });
@@ -41,6 +48,11 @@ CoreQtAdapter::CoreQtAdapter(QObject* parent)
     });
 }
 
+CoreQtAdapter::~CoreQtAdapter()
+{
+    m_core.clearWakeCallback();
+}
+
 Core& CoreQtAdapter::core()
 {
     return m_core;
@@ -54,6 +66,23 @@ const Core& CoreQtAdapter::core() const
 void CoreQtAdapter::processEvents()
 {
     m_core.processEvents();
+}
+
+void CoreQtAdapter::wakeCore(TaskStopTimeout delayMs)
+{
+    const int normalizedDelayMs = static_cast<int>(std::max(delayMs, static_cast<TaskStopTimeout>(0)));
+    if (normalizedDelayMs == 0) {
+        QMetaObject::invokeMethod(this, [this]() {
+            processEvents();
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    QMetaObject::invokeMethod(this, [this, normalizedDelayMs]() {
+        QTimer::singleShot(normalizedDelayMs, this, [this]() {
+            processEvents();
+        });
+    }, Qt::QueuedConnection);
 }
 
 QVariant CoreQtAdapter::toVariant(const TaskResult& value)

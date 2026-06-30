@@ -8,7 +8,6 @@
 #include <QMenu>
 #include <QSplitter>
 #include <QThread>
-#include <QTimer>
 #include <QToolButton>
 
 #include <climits>
@@ -115,12 +114,6 @@ MainWindow::MainWindow(QWidget* parent)
     registerTasks();
     connectAdapterSignals();
     connectControls();
-
-    auto* eventPump = new QTimer(this);
-    connect(eventPump, &QTimer::timeout, this, [this]() {
-        m_adapter.processEvents();
-    });
-    eventPump->start(10);
 
     addLog(LogKind::Info, QString("Qt GUI example uses CoreQtAdapter; core.h remains std-only."));
     addLog(LogKind::Info, QString("Force termination is %1.")

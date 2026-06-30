@@ -13,6 +13,7 @@ class CoreQtAdapter : public QObject {
 
 public:
     explicit CoreQtAdapter(QObject* parent = nullptr);
+    ~CoreQtAdapter() override;
 
     Core& core();
     const Core& core() const;
@@ -30,6 +31,8 @@ signals:
     void stopTimedOutTask(TaskId id, TaskType type, QVariantList args, TaskStopTimeout timeout);
 
 private:
+    void wakeCore(TaskStopTimeout delayMs);
+
     Core m_core;
 };
 

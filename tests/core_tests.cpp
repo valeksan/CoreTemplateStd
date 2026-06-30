@@ -91,6 +91,7 @@ public:
     void cancelTaskByIdStopsCooperatively();
     void stopsTaskCooperativelyByFlag();
     void stopAllTasksStopsQueuedAndActive();
+    void invokesWakeCallbackForQueuedAndDelayedEvents();
     void stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops();
     void stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup();
     void cancelTasksByGroupAliasWorks();
@@ -277,6 +278,40 @@ void CoreTests::stopAllTasksStopsQueuedAndActive() {
         }
     }
     REQUIRE(activeStoppedCooperatively);
+}
+
+void CoreTests::invokesWakeCallbackForQueuedAndDelayedEvents() {
+    Core core;
+    std::atomic_bool immediateWakeSeen{false};
+    std::atomic_bool delayedWakeSeen{false};
+
+    core.setWakeCallback([&immediateWakeSeen, &delayedWakeSeen](TaskStopTimeout delayMs) {
+        if (delayMs == 0) {
+            immediateWakeSeen.store(true);
+        }
+        if (delayMs == 25) {
+            delayedWakeSeen.store(true);
+        }
+    });
+
+    core.registerTask(32, []() -> int {
+        sleepMs(80);
+        return 32;
+    }, 32, 25);
+
+    CoreEventRecorder events;
+    events.attach(core);
+
+    core.addTask(32);
+    REQUIRE(waitUntil(core, [&events]() { return events.started.size() == 1; }, 2000));
+
+    core.stopTaskByType(32);
+    REQUIRE(delayedWakeSeen.load());
+
+    REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 3000));
+    REQUIRE(immediateWakeSeen.load());
+
+    core.clearWakeCallback();
 }
 
 void CoreTests::stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops() {
@@ -678,6 +713,7 @@ int main()
         {"cancelTaskByIdStopsCooperatively", [&tests]() { tests.cancelTaskByIdStopsCooperatively(); }},
         {"stopsTaskCooperativelyByFlag", [&tests]() { tests.stopsTaskCooperativelyByFlag(); }},
         {"stopAllTasksStopsQueuedAndActive", [&tests]() { tests.stopAllTasksStopsQueuedAndActive(); }},
+        {"invokesWakeCallbackForQueuedAndDelayedEvents", [&tests]() { tests.invokesWakeCallbackForQueuedAndDelayedEvents(); }},
         {"stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops", [&tests]() { tests.stopTasksBlocksQueueDuringStopAndResumesAfterActiveStops(); }},
         {"stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup", [&tests]() { tests.stopTasksByGroupWithQueuedOnlyAffectsSelectedGroup(); }},
         {"cancelTasksByGroupAliasWorks", [&tests]() { tests.cancelTasksByGroupAliasWorks(); }},

@@ -39,7 +39,7 @@ include(FetchContent)
 FetchContent_Declare(
     CoreTemplateStd
     GIT_REPOSITORY https://github.com/valeksan/CoreTemplateStd.git
-    GIT_TAG v0.3.0
+    GIT_TAG v0.4.0
 )
 
 FetchContent_MakeAvailable(CoreTemplateStd)
@@ -86,7 +86,7 @@ target_link_libraries(your_qt_target PRIVATE
 )
 ```
 
-`CoreQtAdapter` owns a std-only `Core`, exposes it through `core()`, and re-emits core callbacks as Qt signals with `QVariantList`/`QVariant` payloads. The adapter supports common scalar and string payload conversions; unsupported `std::any` payloads become invalid `QVariant` values.
+`CoreQtAdapter` owns a std-only `Core`, exposes it through `core()`, and re-emits core callbacks as Qt signals with `QVariantList`/`QVariant` payloads. The adapter supports common scalar and string payload conversions; unsupported `std::any` payloads become invalid `QVariant` values. It uses `Core::setWakeCallback` with queued Qt delivery and one-shot timers, so the GUI example does not need a polling timer.
 
 The Qt Widgets GUI example is also optional:
 
@@ -153,6 +153,7 @@ The complete API is defined in `core.h`. The primary methods are:
 - `unregisterTask`: removes a registered task type.
 - `onStarted`, `onFinished`, `onTerminated`, `onStopRequested`, `onStopTimedOut`: set one callback per event kind.
 - `setLogHandler`, `clearLogHandler`: configure or reset the global std-only core log sink.
+- `setWakeCallback`, `clearWakeCallback`: configure or reset an owner-loop wake hook for adapters and integrations.
 - `processEvents`: delivers queued owner-thread events and should be called by the managing thread.
 - `cancelTaskById`, `cancelTaskByType`, `cancelTaskByGroup`, `cancelTasks`, `cancelAllTasks`, `cancelTasksByGroup`: request cooperative cancellation.
 - `stopTaskById`, `stopTaskByType`, `stopTaskByGroup`, `stopTasks`, `stopAllTasks`, `stopTasksByGroup`: compatibility names for the cancellation API.

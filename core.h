@@ -27,6 +27,7 @@ using TaskGroup = int;
 using TaskStopTimeout = int; // ms
 using TaskArgs = std::vector<std::any>;
 using TaskResult = std::any;
+using CoreWakeCallback = std::function<void(TaskStopTimeout)>;
 
 enum class CoreLogLevel {
     Debug,
@@ -187,6 +188,7 @@ public:
     using TerminatedCallback = std::function<void(const TerminatedEvent&)>;
     using StopRequestedCallback = std::function<void(const StopRequestedEvent&)>;
     using StopTimedOutCallback = std::function<void(const StopTimedOutEvent&)>;
+    using WakeCallback = CoreWakeCallback;
 
     Core();
     ~Core();
@@ -199,6 +201,8 @@ public:
     void onTerminated(TerminatedCallback callback);
     void onStopRequested(StopRequestedCallback callback);
     void onStopTimedOut(StopTimedOutCallback callback);
+    void setWakeCallback(WakeCallback callback);
+    void clearWakeCallback();
     void processEvents();
 
     template <typename R, typename... Args>
@@ -311,6 +315,7 @@ private:
     void publishStopTimedOut(const Task& task, TaskStopTimeout timeout);
     void postToOwner(std::function<void()> event);
     void scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event);
+    void requestWake(TaskStopTimeout delayMs);
     void clearOwnerEvents();
 
     template <typename... Args>
@@ -330,6 +335,8 @@ private:
     TerminatedCallback m_terminatedCallback;
     StopRequestedCallback m_stopRequestedCallback;
     StopTimedOutCallback m_stopTimedOutCallback;
+    WakeCallback m_wakeCallback;
+    std::mutex m_wakeCallbackMutex;
 };
 
 // --- Class method implementations *after* class declarations ---
@@ -364,6 +371,16 @@ inline void Core::onStopRequested(StopRequestedCallback callback) {
 
 inline void Core::onStopTimedOut(StopTimedOutCallback callback) {
     m_stopTimedOutCallback = std::move(callback);
+}
+
+inline void Core::setWakeCallback(WakeCallback callback) {
+    std::lock_guard<std::mutex> lock(m_wakeCallbackMutex);
+    m_wakeCallback = std::move(callback);
+}
+
+inline void Core::clearWakeCallback() {
+    std::lock_guard<std::mutex> lock(m_wakeCallbackMutex);
+    m_wakeCallback = {};
 }
 
 inline void Core::processEvents() {
@@ -492,6 +509,7 @@ inline void Core::postToOwner(std::function<void()> event) {
         std::lock_guard<std::mutex> lock(m_eventMutex);
         m_eventQueue.push_back(std::move(event));
     }
+    requestWake(0);
 }
 
 inline void Core::scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<void()> event) {
@@ -502,6 +520,18 @@ inline void Core::scheduleOnOwnerAfter(TaskStopTimeout delayMs, std::function<vo
             std::chrono::steady_clock::now() + std::chrono::milliseconds(normalizedDelayMs),
             std::move(event)
         });
+    }
+    requestWake(normalizedDelayMs);
+}
+
+inline void Core::requestWake(TaskStopTimeout delayMs) {
+    WakeCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(m_wakeCallbackMutex);
+        callback = m_wakeCallback;
+    }
+    if (callback) {
+        callback(std::max(delayMs, static_cast<TaskStopTimeout>(0)));
     }
 }
 
