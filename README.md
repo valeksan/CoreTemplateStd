@@ -196,7 +196,16 @@ Core core;
 core.setAllowForceTermination(true);
 ```
 
-The current `std::thread` backend has no safe standard way to kill a running thread. Enabling force termination keeps the API compatible, but non-cooperative tasks still receive a stop request and then a stop-timeout event if they keep running.
+The portable `std::thread` backend has no safe standard way to kill a running thread. By default, enabling force termination keeps the API compatible, but non-cooperative tasks still receive a stop request and then a stop-timeout event if they keep running.
+
+For demos or legacy compatibility, a platform-specific unsafe backend can be enabled at configure time:
+
+```bash
+cmake -S . -B build/unsafe_force \
+  -DCORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION=ON
+```
+
+This uses native thread termination APIs where available. It can interrupt non-cooperative tasks, but it is unsafe by nature: task destructors and cleanup code may not run. The Qt GUI example enables this option by default so its non-cooperative demo task can be interrupted.
 
 ## Grouping Example
 

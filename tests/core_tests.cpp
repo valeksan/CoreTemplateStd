@@ -669,9 +669,15 @@ void CoreTests::terminateTaskByIdWhenForceDisabledRequestsCooperativeStopOnly() 
 
     core.setAllowForceTermination(true);
     core.terminateTaskById(id);
-    REQUIRE(waitUntil(core, [&events]() { return events.stopTimedOut.size() >= 2; }, 3000));
+#if CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION
+    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
+#else
+    sleepMs(120);
+    core.processEvents();
+    REQUIRE_EQ(events.stopTimedOut.size(), static_cast<std::size_t>(1));
     REQUIRE_EQ(events.terminated.size(), static_cast<std::size_t>(0));
     REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 5000));
+#endif
     REQUIRE(core.isIdle());
 }
 
@@ -697,9 +703,14 @@ void CoreTests::terminateTaskByIdForceReportsTimeoutForNonCooperativeTask() {
     sleepMs(30);
     core.terminateTaskById(id);
 
+#if CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION
+    REQUIRE(waitUntil(core, [&events]() { return events.terminated.size() == 1; }, 3000));
+    REQUIRE_EQ(events.stopTimedOut.size(), static_cast<std::size_t>(0));
+#else
     REQUIRE(waitUntil(core, [&events]() { return events.stopTimedOut.size() == 1; }, 3000));
     REQUIRE_EQ(events.terminated.size(), static_cast<std::size_t>(0));
     REQUIRE(waitUntil(core, [&events]() { return events.finished.size() == 1; }, 3000));
+#endif
     REQUIRE(core.isIdle());
 }
 

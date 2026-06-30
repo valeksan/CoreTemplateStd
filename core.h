@@ -20,6 +20,21 @@
 #include <sstream>
 #include <string>
 
+#ifndef CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION
+#define CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION 0
+#endif
+
+#if CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__unix__) || defined(__APPLE__)
+#include <pthread.h>
+#endif
+#endif
+
 // --- Using aliases to improve readability ---
 using TaskId = long;
 using TaskType = int;
@@ -38,6 +53,38 @@ using CoreLogHandler = std::function<void(CoreLogLevel, const std::string&)>;
 
 namespace core_detail {
 inline thread_local std::atomic_bool* g_currentStopFlag = nullptr;
+
+inline void configureCurrentThreadForUnsafeTermination() {
+#if CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION && (defined(__unix__) || defined(__APPLE__))
+    pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr);
+#endif
+}
+
+inline bool unsafeForceTerminationSupported() {
+#if CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION && (defined(_WIN32) || defined(__unix__) || defined(__APPLE__))
+    return true;
+#else
+    return false;
+#endif
+}
+
+inline bool unsafeTerminateThread(std::thread& thread) {
+#if CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION && defined(_WIN32)
+    if (!thread.joinable()) {
+        return false;
+    }
+    return TerminateThread(thread.native_handle(), 1) != 0;
+#elif CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION && (defined(__unix__) || defined(__APPLE__))
+    if (!thread.joinable()) {
+        return false;
+    }
+    return pthread_cancel(thread.native_handle()) == 0;
+#else
+    (void)thread;
+    return false;
+#endif
+}
 
 inline std::mutex& logMutex() {
     static std::mutex mutex;
@@ -289,6 +336,8 @@ private:
         std::thread m_thread;
         std::atomic_bool m_stopFlag{false};
         std::atomic_bool m_threadExited{false};
+        std::atomic_bool m_stopTimedOutPublished{false};
+        std::atomic_bool m_forceTerminationAttempted{false};
         TaskState m_state;
     };
 
@@ -297,6 +346,7 @@ private:
     std::shared_ptr<Task> activeTaskByGroup(TaskGroup group);
 
     void terminateTask(std::shared_ptr<Task> pTask);
+    void completeForceTermination(std::shared_ptr<Task> pTask, TaskStopTimeout timeout);
     void stopTask(std::shared_ptr<Task> pTask);
     void startTask(std::shared_ptr<Task> pTask);
     void startQueuedTask();
@@ -1025,6 +1075,12 @@ inline void Core::joinTaskThread(Task& task) {
 }
 
 inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
+    if (pTask->m_state == TaskState::Inactive
+        || pTask->m_state == TaskState::Finished
+        || pTask->m_state == TaskState::Terminated) {
+        return;
+    }
+
     // Set stop flag to request cooperative cancellation
     pTask->m_stopFlag.store(true);
 
@@ -1040,54 +1096,62 @@ inline void Core::terminateTask(std::shared_ptr<Core::Task> pTask) {
         timeout = taskInfoIt->second.m_stopTimeout;
     }
 
-    core_detail::logWarning() << "Task" << pTask->m_id
-                              << "force termination is not supported by the std::thread backend;"
-                              << "waiting for cooperative stop";
+    if (pTask->m_state == TaskState::StopTimedOut) {
+        completeForceTermination(pTask, timeout);
+        return;
+    }
 
-    const auto startedAt = std::chrono::steady_clock::now();
-    auto checker = std::make_shared<std::function<void()>>();
-    std::weak_ptr<std::function<void()>> weakChecker = checker;
-
-    *checker = [this, pTask, timeout, startedAt, weakChecker]() {
-        if (pTask->m_state == TaskState::Inactive
-            || pTask->m_state == TaskState::Finished
-            || pTask->m_state == TaskState::Terminated) {
-            return; // already finished/terminated by another path
-        }
-
-        if (pTask->m_threadExited.load()) {
-            return;
-        }
-
-        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - startedAt
-        ).count();
-
-        if (elapsedMs >= timeout) {
-            pTask->m_state = TaskState::StopTimedOut;
-            core_detail::logWarning() << "Task" << pTask->m_id
-                       << "did not stop cooperatively within timeout" << timeout << "ms";
-            publishStopTimedOut(*pTask, timeout);
-            return;
-        }
-
-        if (auto checker = weakChecker.lock()) {
-            scheduleOnOwnerAfter(20, [checker]() {
-                (*checker)();
-            });
-        }
-    };
-
-    scheduleOnOwnerAfter(0, [checker]() {
-        (*checker)();
+    scheduleOnOwnerAfter(timeout, [this, pTask, timeout]() {
+        completeForceTermination(pTask, timeout);
     });
 }
 
+inline void Core::completeForceTermination(std::shared_ptr<Core::Task> pTask, TaskStopTimeout timeout) {
+    if (pTask->m_state == TaskState::Inactive
+        || pTask->m_state == TaskState::Finished
+        || pTask->m_state == TaskState::Terminated
+        || pTask->m_threadExited.load()) {
+        return;
+    }
+
+    if (core_detail::unsafeForceTerminationSupported()) {
+        if (pTask->m_forceTerminationAttempted.exchange(true)) {
+            return;
+        }
+
+        core_detail::logWarning() << "Task" << pTask->m_id << "did not stop cooperatively within timeout"
+                                  << timeout << "ms; force terminating native thread";
+        if (core_detail::unsafeTerminateThread(pTask->m_thread)) {
+            pTask->m_threadExited.store(true);
+            pTask->m_state = TaskState::Terminated;
+            publishTerminated(*pTask);
+            joinTaskThread(*pTask);
+            removeActiveTask(pTask);
+            startQueuedTask();
+            return;
+        }
+
+        core_detail::logWarning() << "Task" << pTask->m_id << "native force termination failed";
+    } else {
+        core_detail::logWarning() << "Task" << pTask->m_id
+                                  << "force termination is not supported by this build;"
+                                  << "reporting cooperative stop timeout";
+    }
+
+    pTask->m_state = TaskState::StopTimedOut;
+    if (!pTask->m_stopTimedOutPublished.exchange(true)) {
+        core_detail::logWarning() << "Task" << pTask->m_id
+                                  << "did not stop cooperatively within timeout" << timeout << "ms";
+        publishStopTimedOut(*pTask, timeout);
+    }
+}
+
 inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
-    pTask->m_stopFlag.store(true);
-    if (pTask->m_state == TaskState::Active) {
-        pTask->m_state = TaskState::StopRequested;
-        publishStopRequested(*pTask);
+    if (pTask->m_state == TaskState::Inactive
+        || pTask->m_state == TaskState::Finished
+        || pTask->m_state == TaskState::Terminated
+        || pTask->m_state == TaskState::StopRequested) {
+        return;
     }
 
     TaskStopTimeout timeout = kDefaultStopTimeout;
@@ -1096,6 +1160,19 @@ inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
         timeout = taskInfoIt->second.m_stopTimeout;
     } else {
         core_detail::logWarning() << "Core::stopTask - Missing registration for active task type:" << pTask->m_type;
+    }
+
+    if (pTask->m_state == TaskState::StopTimedOut) {
+        if (m_allowForceTermination) {
+            completeForceTermination(pTask, timeout);
+        }
+        return;
+    }
+
+    pTask->m_stopFlag.store(true);
+    if (pTask->m_state == TaskState::Active) {
+        pTask->m_state = TaskState::StopRequested;
+        publishStopRequested(*pTask);
     }
 
     scheduleOnOwnerAfter(timeout, [this, pTask, timeout]() {
@@ -1113,15 +1190,14 @@ inline void Core::stopTask(std::shared_ptr<Core::Task> pTask) {
         case TaskState::Active:
             if (!m_allowForceTermination) {
                 pTask->m_state = TaskState::StopTimedOut;
-                core_detail::logWarning() << "Task" << pTask->m_id << "stop timed out; force termination is disabled";
-                publishStopTimedOut(*pTask, timeout);
+                if (!pTask->m_stopTimedOutPublished.exchange(true)) {
+                    core_detail::logWarning() << "Task" << pTask->m_id << "stop timed out; force termination is disabled";
+                    publishStopTimedOut(*pTask, timeout);
+                }
                 break;
             }
             core_detail::logDebug() << "Task" << pTask->m_id << "was not stopped, terminating";
-            terminateTask(pTask);
-            if (pTask->m_state == TaskState::Active || pTask->m_state == TaskState::StopRequested) {
-                core_detail::logDebug() << "Task" << pTask->m_id << "terminate request is in progress";
-            }
+            completeForceTermination(pTask, timeout);
             break;
         default:
             core_detail::logDebug() << "Task" << pTask->m_id << "unexpected state";
@@ -1137,6 +1213,7 @@ inline void Core::startTask(std::shared_ptr<Core::Task> pTask) {
 
     try {
         pTask->m_thread = std::thread([this, pTask]() {
+            core_detail::configureCurrentThreadForUnsafeTermination();
             core_detail::g_currentStopFlag = &pTask->m_stopFlag;
             TaskResult result;
             try {

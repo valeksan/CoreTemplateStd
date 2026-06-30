@@ -100,7 +100,11 @@ MainWindow::MainWindow(QWidget* parent)
     ui->menuBar->setHidden(true);
     ui->mainToolBar->setHidden(true);
 
+#if CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION
     m_adapter.core().setAllowForceTermination(true);
+#else
+    m_adapter.core().setAllowForceTermination(false);
+#endif
 
     if (auto* splitter = findChild<QSplitter*>("splitterMainPanels")) {
         splitter->setStretchFactor(0, 2);
@@ -116,7 +120,7 @@ MainWindow::MainWindow(QWidget* parent)
     connectControls();
 
     addLog(LogKind::Info, QString("Qt GUI example uses CoreQtAdapter; core.h remains std-only."));
-    addLog(LogKind::Info, QString("Force termination is %1.")
+    addLog(LogKind::Info, QString("Unsafe native force termination is %1.")
                               .arg(m_adapter.core().allowForceTermination() ? "enabled" : "disabled"));
 
     addInitialTasks();
@@ -347,7 +351,7 @@ void MainWindow::connectControls()
 
     connect(ui->pushButtonStopTasks, &QPushButton::clicked, this, [this]() {
         QMenu menu(this);
-        QAction* allowForceTerminate = menu.addAction("Allow Force Termination");
+        QAction* allowForceTerminate = menu.addAction("Allow Unsafe Force Termination");
         allowForceTerminate->setCheckable(true);
         allowForceTerminate->setChecked(m_adapter.core().allowForceTermination());
         menu.addSeparator();
@@ -366,7 +370,7 @@ void MainWindow::connectControls()
         if (selected == allowForceTerminate) {
             const bool enabled = allowForceTerminate->isChecked();
             m_adapter.core().setAllowForceTermination(enabled);
-            addLog(LogKind::Info, QString("Force termination %1.").arg(enabled ? "enabled" : "disabled"));
+            addLog(LogKind::Info, QString("Unsafe native force termination %1.").arg(enabled ? "enabled" : "disabled"));
             return;
         }
 

@@ -24,6 +24,8 @@ cmake --build ../build/qt_adapter_tests
 ctest --test-dir ../build/qt_adapter_tests --output-on-failure
 ```
 
+`CORETEMPLATE_BUILD_QT_GUI_EXAMPLE=ON` enables `CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION=ON` by default so the GUI's non-cooperative demo task can be interrupted. Keep the unsafe option disabled for normal std-only test runs unless you are testing platform-specific termination behavior.
+
 Installed Qt adapter package smoke:
 
 ```bash

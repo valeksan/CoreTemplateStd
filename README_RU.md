@@ -196,7 +196,16 @@ Core core;
 core.setAllowForceTermination(true);
 ```
 
-В текущем `std::thread` backend нет безопасного стандартного способа убить выполняющийся поток. Включение force termination сохраняет совместимость API, но non-cooperative задача всё равно получает stop request, а затем stop-timeout event, если продолжает выполняться.
+В переносимом `std::thread` backend нет безопасного стандартного способа убить выполняющийся поток. По умолчанию включение force termination сохраняет совместимость API, но non-cooperative задача всё равно получает stop request, а затем stop-timeout event, если продолжает выполняться.
+
+Для demo-сценариев или совместимости со старым поведением можно включить platform-specific unsafe backend:
+
+```bash
+cmake -S . -B build/unsafe_force \
+  -DCORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION=ON
+```
+
+Он использует native thread termination API там, где это доступно. Такой режим может прервать non-cooperative задачу, но по природе небезопасен: destructors и cleanup code внутри задачи могут не выполниться. Qt GUI example включает эту опцию по умолчанию, чтобы его non-cooperative demo task можно было прервать.
 
 ## Пример группировки
 

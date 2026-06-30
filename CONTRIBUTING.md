@@ -97,8 +97,8 @@ ctest --test-dir build/release_package_smoke --output-on-failure
 Release tags use the `vMAJOR.MINOR.PATCH` format:
 
 ```bash
-git tag -a v0.5.1 -F docs/releases/v0.5.1.md
-git push origin v0.5.1
+git tag -a v0.5.2 -F docs/releases/v0.5.2.md
+git push origin v0.5.2
 ```
 
 ## Pull Request Guidelines

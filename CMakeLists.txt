@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(CoreTemplateStd VERSION 0.5.1 LANGUAGES CXX)
+project(CoreTemplateStd VERSION 0.5.2 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -24,7 +24,12 @@ option(CORETEMPLATE_BUILD_EXAMPLE "Build the example application" ON)
 option(CORETEMPLATE_BUILD_TESTS "Build the test suite" OFF)
 option(CORETEMPLATE_BUILD_QT_ADAPTER "Build the optional Qt adapter target" OFF)
 option(CORETEMPLATE_BUILD_QT_GUI_EXAMPLE "Build the optional Qt Widgets GUI example" OFF)
+option(CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION "Enable platform-specific unsafe native thread termination" ${CORETEMPLATE_BUILD_QT_GUI_EXAMPLE})
 option(CORETEMPLATE_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer for local test and example targets" OFF)
+
+if(CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION)
+    target_compile_definitions(CoreTemplateStd INTERFACE CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION=1)
+endif()
 
 if(CORETEMPLATE_ENABLE_SANITIZERS)
     if(MSVC)

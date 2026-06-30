@@ -2,6 +2,17 @@
 
 All notable changes to CoreTemplateStd are documented in this file.
 
+## [0.5.2] - 2026-06-30
+
+### Added
+
+- `CORETEMPLATE_ENABLE_UNSAFE_FORCE_TERMINATION` CMake option for platform-specific native thread termination.
+
+### Fixed
+
+- Repeated cancel/terminate requests no longer emit duplicate stop-timeout events for the same task.
+- `ExampleQtGuiApp` now enables unsafe native force termination by default so the non-cooperative demo task can be interrupted.
+
 ## [0.5.1] - 2026-06-30
 
 ### Fixed
@@ -81,6 +92,7 @@ Initial std-only release.
 - Installed package consumers can include `#include <CoreTemplateStd/core.h>`.
 - The old `find_package(CoreTemplate)` and `CoreTemplate::CoreTemplate` names remain available as compatibility aliases.
 
+[0.5.2]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.5.2
 [0.5.1]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.5.1
 [0.5.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.5.0
 [0.4.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.4.0
