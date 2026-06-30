@@ -12,6 +12,8 @@ namespace Ui {
 class MainWindow;
 }
 
+class QListWidgetItem;
+
 enum Tasks {
     TASK_STOPPABLE = 0,
     TASK_NON_COOPERATIVE,
@@ -62,6 +64,7 @@ private:
     void addInitialTasks();
     void addLog(LogKind kind, const QString& text);
     void rebuildLog();
+    QListWidgetItem* taskItemById(TaskId taskId) const;
     void removeTaskItemById(TaskId taskId);
     QString formatTaskInfo(TaskId id, TaskType type);
 

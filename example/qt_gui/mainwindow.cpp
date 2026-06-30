@@ -206,6 +206,16 @@ void MainWindow::setupInputs()
     ui->lineEditStopTaskId->setValidator(new QIntValidator(0, INT_MAX, this));
     ui->lineEditStopTaskType->setValidator(new QIntValidator(0, INT_MAX, this));
     ui->lineEditStopTaskGroup->setValidator(new QIntValidator(0, INT_MAX, this));
+
+    connect(ui->listWidget, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current) {
+        if (!current) {
+            return;
+        }
+
+        ui->lineEditStopTaskId->setText(QString::number(current->data(RoleTaskId).toLongLong()));
+        ui->lineEditStopTaskType->setText(QString::number(current->data(RoleTaskType).toInt()));
+        ui->lineEditStopTaskGroup->setText(QString::number(current->data(RoleTaskGroup).toInt()));
+    });
 }
 
 void MainWindow::registerTasks()
@@ -261,6 +271,7 @@ void MainWindow::connectAdapterSignals()
         item->setData(RoleTaskType, type);
         item->setData(RoleTaskGroup, ok ? group : -1);
         ui->listWidget->addItem(item);
+        ui->listWidget->setCurrentItem(item);
     });
 
     connect(&m_adapter, &CoreQtAdapter::finishedTask, this,
@@ -304,9 +315,18 @@ void MainWindow::connectControls()
     connect(ui->pushButtonStopTaskById, &QPushButton::clicked, this, [this]() {
         bool ok = false;
         const auto id = static_cast<TaskId>(ui->lineEditStopTaskId->text().toLongLong(&ok));
-        if (ok) {
-            m_adapter.core().cancelTaskById(id);
+        if (!ok) {
+            addLog(LogKind::Info, QString("Enter an active task ID before canceling by ID."));
+            return;
         }
+
+        if (!taskItemById(id)) {
+            addLog(LogKind::Info, QString("No active task with ID %1. Select a task from the active list or use Cancel By Type.").arg(id));
+            return;
+        }
+
+        addLog(LogKind::Info, QString("Cancel requested by ID %1.").arg(id));
+        m_adapter.core().cancelTaskById(id);
     });
 
     connect(ui->pushButtonStopTaskByType, &QPushButton::clicked, this, [this]() {
@@ -409,14 +429,22 @@ void MainWindow::rebuildLog()
     }
 }
 
-void MainWindow::removeTaskItemById(TaskId taskId)
+QListWidgetItem* MainWindow::taskItemById(TaskId taskId) const
 {
     for (int i = 0; i < ui->listWidget->count(); ++i) {
         QListWidgetItem* item = ui->listWidget->item(i);
         if (item && item->data(RoleTaskId).toLongLong() == taskId) {
-            delete ui->listWidget->takeItem(i);
-            return;
+            return item;
         }
+    }
+    return nullptr;
+}
+
+void MainWindow::removeTaskItemById(TaskId taskId)
+{
+    if (auto* item = taskItemById(taskId)) {
+        delete ui->listWidget->takeItem(ui->listWidget->row(item));
+        return;
     }
 }
 

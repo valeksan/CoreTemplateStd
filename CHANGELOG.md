@@ -2,6 +2,13 @@
 
 All notable changes to CoreTemplateStd are documented in this file.
 
+## [0.5.1] - 2026-06-30
+
+### Fixed
+
+- `ExampleQtGuiApp` now auto-fills task ID/type/group fields from the selected active task.
+- `Cancel By ID` in the GUI example now reports when the entered ID is not an active task ID.
+
 ## [0.5.0] - 2026-06-30
 
 ### Added
@@ -74,6 +81,7 @@ Initial std-only release.
 - Installed package consumers can include `#include <CoreTemplateStd/core.h>`.
 - The old `find_package(CoreTemplate)` and `CoreTemplate::CoreTemplate` names remain available as compatibility aliases.
 
+[0.5.1]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.5.1
 [0.5.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.5.0
 [0.4.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.4.0
 [0.3.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.3.0
