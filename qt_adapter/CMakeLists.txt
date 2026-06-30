@@ -19,12 +19,31 @@ target_link_libraries(CoreTemplateQtAdapter PUBLIC
 
 target_include_directories(CoreTemplateQtAdapter PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplateStd/qt_adapter>
 )
 
 target_compile_features(CoreTemplateQtAdapter PUBLIC cxx_std_17)
 
 set_target_properties(CoreTemplateQtAdapter PROPERTIES
     AUTOMOC ON
+    EXPORT_NAME QtAdapter
+)
+
+install(FILES CoreQtAdapter.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/CoreTemplateStd/qt_adapter
+)
+
+install(TARGETS CoreTemplateQtAdapter
+    EXPORT CoreTemplateStdQtAdapterTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(EXPORT CoreTemplateStdQtAdapterTargets
+    FILE CoreTemplateStdQtAdapterTargets.cmake
+    NAMESPACE CoreTemplateStd::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CoreTemplateStd
 )
 
 if(CORETEMPLATE_BUILD_TESTS)

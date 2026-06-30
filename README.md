@@ -86,6 +86,13 @@ target_link_libraries(your_qt_target PRIVATE
 )
 ```
 
+Installed packages expose the adapter as an optional component:
+
+```cmake
+find_package(CoreTemplateStd REQUIRED COMPONENTS QtAdapter)
+target_link_libraries(your_qt_target PRIVATE CoreTemplateStd::QtAdapter)
+```
+
 `CoreQtAdapter` owns a std-only `Core`, exposes it through `core()`, and re-emits core callbacks as Qt signals with `QVariantList`/`QVariant` payloads. The adapter supports common scalar and string payload conversions; unsupported `std::any` payloads become invalid `QVariant` values. It uses `Core::setWakeCallback` with queued Qt delivery and one-shot timers, so the GUI example does not need a polling timer.
 
 The Qt Widgets GUI example is also optional:

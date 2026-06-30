@@ -2,6 +2,14 @@
 
 All notable changes to CoreTemplateStd are documented in this file.
 
+## [0.5.0] - 2026-06-30
+
+### Added
+
+- Installed package support for the optional `CoreTemplateStd::QtAdapter` target.
+- `find_package(CoreTemplateStd COMPONENTS QtAdapter)` for consumers that want the installed Qt adapter.
+- Package smoke coverage for the installed Qt adapter component.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added
@@ -66,6 +74,7 @@ Initial std-only release.
 - Installed package consumers can include `#include <CoreTemplateStd/core.h>`.
 - The old `find_package(CoreTemplate)` and `CoreTemplate::CoreTemplate` names remain available as compatibility aliases.
 
+[0.5.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.5.0
 [0.4.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.4.0
 [0.3.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.3.0
 [0.2.0]: https://github.com/valeksan/CoreTemplateStd/releases/tag/v0.2.0

@@ -124,3 +124,22 @@ jobs:
 
       - name: Run Qt adapter tests
         run: ctest --test-dir build/qt_adapter --build-config Release --output-on-failure
+
+      - name: Install Qt adapter package
+        run: >
+          cmake --install build/qt_adapter
+          --config Release
+          --prefix build/qt_adapter_install
+
+      - name: Configure Qt adapter package smoke consumer
+        run: >
+          cmake -S tests/package_smoke -B build/qt_adapter_package_smoke
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH=${{ github.workspace }}/build/qt_adapter_install
+          -DCORETEMPLATE_PACKAGE_SMOKE_QT_ADAPTER=ON
+
+      - name: Build Qt adapter package smoke consumer
+        run: cmake --build build/qt_adapter_package_smoke --config Release
+
+      - name: Run Qt adapter package smoke consumer
+        run: ctest --test-dir build/qt_adapter_package_smoke --build-config Release --output-on-failure
